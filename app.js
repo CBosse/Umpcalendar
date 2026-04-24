@@ -62,26 +62,40 @@ function setFieldSlot(dayKey, time, field, patch) {
 
 // ── Firestore write helpers ────────────────────────────────────────────────
 
+function showDbError(err) {
+  console.error('Firestore error:', err);
+  const msg = err?.code === 'permission-denied'
+    ? 'Database permission denied. Check your Firestore security rules in Firebase Console.'
+    : `Database error: ${err?.message ?? err}`;
+  showBanner(msg, 'error');
+}
+
+function firestoreWrite(promise) {
+  return promise.catch(showDbError);
+}
+
 function saveSettings() {
-  return setDoc(doc(db, 'config', 'settings'), {
+  return firestoreWrite(setDoc(doc(db, 'config', 'settings'), {
     gameDay:    state.gameDay,
     field1Name: state.field1Name,
     field2Name: state.field2Name,
     times:      state.times,
-  });
+  }));
 }
 
 function saveUmp(ump) {
-  return setDoc(doc(db, 'umps', ump.id), { name: ump.name, phone: ump.phone });
+  return firestoreWrite(setDoc(doc(db, 'umps', ump.id), { name: ump.name, phone: ump.phone }));
 }
 
 function deleteUmp(id) {
-  return deleteDoc(doc(db, 'umps', id));
+  return firestoreWrite(deleteDoc(doc(db, 'umps', id)));
 }
 
 function saveAssignment(dayKey, slots) {
-  if (Object.keys(slots).length === 0) return deleteDoc(doc(db, 'assignments', dayKey));
-  return setDoc(doc(db, 'assignments', dayKey), slots);
+  const op = Object.keys(slots).length === 0
+    ? deleteDoc(doc(db, 'assignments', dayKey))
+    : setDoc(doc(db, 'assignments', dayKey), slots);
+  return firestoreWrite(op);
 }
 
 // ── localStorage → Firestore migration ────────────────────────────────────
@@ -168,14 +182,14 @@ onSnapshot(doc(db, 'config', 'settings'), snap => {
   state._ready.settings = true;
   checkReady();
   if (allReady()) renderCurrentTab();
-}, err => console.error('settings listener:', err));
+}, err => showDbError(err));
 
 onSnapshot(collection(db, 'umps'), snap => {
   state.umps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   state._ready.umps = true;
   checkReady();
   if (allReady()) renderCurrentTab();
-}, err => console.error('umps listener:', err));
+}, err => showDbError(err));
 
 onSnapshot(collection(db, 'assignments'), snap => {
   state.assignments = {};
@@ -183,7 +197,7 @@ onSnapshot(collection(db, 'assignments'), snap => {
   state._ready.assignments = true;
   checkReady();
   if (allReady()) renderCurrentTab();
-}, err => console.error('assignments listener:', err));
+}, err => showDbError(err));
 
 // ── Date helpers ───────────────────────────────────────────────────────────
 
@@ -379,7 +393,7 @@ document.getElementById('clear-week-btn').addEventListener('click', () => {
   if (!confirm('Clear all assignments and team names for this game day?')) return;
   const key = dateKey(currentWeekStart);
   delete state.assignments[key];
-  deleteDoc(doc(db, 'assignments', key));
+  firestoreWrite(deleteDoc(doc(db, 'assignments', key)));
 });
 
 document.getElementById('copy-prev-btn').addEventListener('click', () => {
@@ -595,6 +609,17 @@ function matchupHTML(slot) {
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────
+
+function showBanner(msg, type = 'error') {
+  const el = document.getElementById('db-banner');
+  el.textContent = msg;
+  el.className = `db-banner db-banner--${type}`;
+  el.style.display = 'block';
+  if (type !== 'error') {
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.style.display = 'none'; }, 5000);
+  }
+}
 
 function escHtml(str) {
   return String(str)
