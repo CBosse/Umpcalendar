@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Softball Ump Scheduler</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>⚾ Softball Ump Scheduler</h1>
+  </header>
+
+  <main>
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="schedule">Schedule</button>
+      <button class="tab" data-tab="umps">Umpires</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+
+    <!-- Schedule Tab -->
+    <section id="tab-schedule" class="tab-content active">
+      <div class="week-nav">
+        <button id="prev-week">&larr;</button>
+        <h2 id="week-label"></h2>
+        <button id="next-week">&rarr;</button>
+      </div>
+      <div class="schedule-grid-wrapper">
+        <table class="schedule-grid" id="schedule-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th id="field1-header">Field 1</th>
+              <th id="field2-header">Field 2</th>
+            </tr>
+          </thead>
+          <tbody id="schedule-body"></tbody>
+        </table>
+        <p id="no-slots-msg" class="muted" style="display:none;">
+          No game times configured. Go to <strong>Settings</strong> to add time slots.
+        </p>
+      </div>
+      <div class="schedule-actions">
+        <button id="clear-week-btn" class="btn-danger">Clear This Week</button>
+        <button id="copy-prev-btn" class="btn-secondary">Copy Previous Week</button>
+        <button id="print-btn" class="btn-secondary">Print Schedule</button>
+      </div>
+    </section>
+
+    <!-- Umpires Tab -->
+    <section id="tab-umps" class="tab-content">
+      <div class="add-form">
+        <input id="ump-name-input" type="text" placeholder="Umpire name" maxlength="40" />
+        <input id="ump-phone-input" type="text" placeholder="Phone (optional)" maxlength="20" />
+        <button id="add-ump-btn" class="btn-primary">Add Umpire</button>
+      </div>
+      <ul id="ump-list" class="item-list"></ul>
+      <p id="no-umps-msg" class="muted" style="display:none;">No umpires added yet.</p>
+    </section>
+
+    <!-- Settings Tab -->
+    <section id="tab-settings" class="tab-content">
+      <div class="settings-group">
+        <label>Game Day of the Week</label>
+        <select id="game-day-select">
+          <option value="0">Sunday</option>
+          <option value="1">Monday</option>
+          <option value="2">Tuesday</option>
+          <option value="3">Wednesday</option>
+          <option value="4">Thursday</option>
+          <option value="5">Friday</option>
+          <option value="6">Saturday</option>
+        </select>
+      </div>
+
+      <div class="settings-group">
+        <label>Field Names</label>
+        <div class="field-names">
+          <input id="field1-name" type="text" placeholder="Field 1 name" maxlength="30" />
+          <input id="field2-name" type="text" placeholder="Field 2 name" maxlength="30" />
+          <button id="save-fields-btn" class="btn-primary">Save</button>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <label>Game Times</label>
+        <div class="add-form">
+          <input id="new-time-input" type="time" />
+          <button id="add-time-btn" class="btn-primary">Add Time</button>
+        </div>
+        <ul id="times-list" class="item-list"></ul>
+        <p id="no-times-msg" class="muted" style="display:none;">No times added yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Loading overlay shown until Firestore data arrives -->
+  <div id="loading-overlay">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <p>Connecting…</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
