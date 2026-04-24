@@ -189,10 +189,11 @@ onSnapshot(doc(db, 'config', 'settings'), snap => {
     document.getElementById('field1-name').value     = state.field1Name;
     document.getElementById('field2-name').value     = state.field2Name;
   } else if (!snap.metadata.fromCache && !migrationAttempted) {
-    // Firestore has no settings yet — migrate from localStorage if available
+    // Firestore has no settings yet — migrate from localStorage if available.
+    // Fire-and-forget: if migration writes data the listener re-fires with it;
+    // if there's nothing to migrate we fall through and mark settings ready anyway.
     migrationAttempted = true;
     migrateFromLocalStorage();
-    return; // listener will re-fire after the write
   }
   state._ready.settings = true;
   checkReady();
