@@ -151,11 +151,26 @@ function allReady() {
 
 function checkReady() {
   if (allReady()) {
+    clearTimeout(connectTimeout);
     document.getElementById('loading-overlay').style.display = 'none';
     if (!currentWeekStart) currentWeekStart = getGameDayDate(new Date(), state.gameDay);
     renderCurrentTab();
   }
 }
+
+// If Firestore hasn't responded in 10 seconds, surface an error instead of spinning forever
+const connectTimeout = setTimeout(() => {
+  if (!allReady()) {
+    document.getElementById('loading-overlay').style.display = 'none';
+    if (!currentWeekStart) currentWeekStart = getGameDayDate(new Date(), state.gameDay);
+    showBanner(
+      'Could not connect to database. Check that the "umpcalendar" Firestore database exists ' +
+      'in Firebase Console and its security rules allow reads and writes.',
+      'error'
+    );
+    renderCurrentTab();
+  }
+}, 10000);
 
 let migrationAttempted = false;
 
