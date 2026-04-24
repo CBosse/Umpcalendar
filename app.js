@@ -84,6 +84,51 @@ function saveAssignment(dayKey, slots) {
   return setDoc(doc(db, 'assignments', dayKey), slots);
 }
 
+// ── localStorage → Firestore migration ────────────────────────────────────
+// Runs once if Firestore has no settings (app was previously localStorage-only)
+
+async function migrateFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem('umpScheduler');
+    if (!raw) return;
+    const old = JSON.parse(raw);
+    if (!old || (!old.times?.length && !old.umps?.length)) return;
+
+    const writes = [];
+
+    // Settings
+    writes.push(setDoc(doc(db, 'config', 'settings'), {
+      gameDay:    old.gameDay    ?? 3,
+      field1Name: old.field1Name ?? 'Field 1',
+      field2Name: old.field2Name ?? 'Field 2',
+      times:      old.times      ?? [],
+    }));
+
+    // Umpires
+    (old.umps ?? []).forEach(u => {
+      writes.push(setDoc(doc(db, 'umps', u.id), { name: u.name, phone: u.phone ?? '' }));
+    });
+
+    // Assignments — convert old {f1: umpId, f2: umpId} → new {f1:{ump,home,away}, f2:{...}}
+    Object.entries(old.assignments ?? {}).forEach(([date, slots]) => {
+      const newSlots = {};
+      Object.entries(slots).forEach(([time, slot]) => {
+        newSlots[time] = {
+          f1: { ump: typeof slot.f1 === 'string' ? slot.f1 : '', home: '', away: '' },
+          f2: { ump: typeof slot.f2 === 'string' ? slot.f2 : '', home: '', away: '' },
+        };
+      });
+      writes.push(setDoc(doc(db, 'assignments', date), newSlots));
+    });
+
+    await Promise.all(writes);
+    localStorage.removeItem('umpScheduler');
+    console.log('Migrated localStorage data to Firestore');
+  } catch (err) {
+    console.error('localStorage migration failed:', err);
+  }
+}
+
 // ── Firestore real-time listeners ──────────────────────────────────────────
 
 function allReady() {
@@ -97,6 +142,8 @@ function checkReady() {
     renderCurrentTab();
   }
 }
+
+let migrationAttempted = false;
 
 onSnapshot(doc(db, 'config', 'settings'), snap => {
   if (snap.exists()) {
@@ -112,6 +159,11 @@ onSnapshot(doc(db, 'config', 'settings'), snap => {
     document.getElementById('game-day-select').value = state.gameDay;
     document.getElementById('field1-name').value     = state.field1Name;
     document.getElementById('field2-name').value     = state.field2Name;
+  } else if (!snap.metadata.fromCache && !migrationAttempted) {
+    // Firestore has no settings yet — migrate from localStorage if available
+    migrationAttempted = true;
+    migrateFromLocalStorage();
+    return; // listener will re-fire after the write
   }
   state._ready.settings = true;
   checkReady();
@@ -143,8 +195,12 @@ function getGameDayDate(from, dayOfWeek, weekOffset = 0) {
   return d;
 }
 
+// Use local date parts — toISOString() returns UTC which breaks for US timezones
 function dateKey(date) {
-  return date.toISOString().slice(0, 10);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function formatDate(date) {
