@@ -458,9 +458,11 @@ function normalizeCSVTime(raw) {
 }
 
 function matchFieldName(raw) {
-  const f = raw.trim().toLowerCase();
-  if (f === state.field1Name.toLowerCase() || f === 'field 1' || f === '1') return 'f1';
-  if (f === state.field2Name.toLowerCase() || f === 'field 2' || f === '2') return 'f2';
+  const f = raw.trim().toLowerCase().replace(/[-_]/g, ' ');
+  const f1 = state.field1Name.toLowerCase();
+  const f2 = state.field2Name.toLowerCase();
+  if (f === f1 || f === 'field 1' || f === 'field1' || f === 'f1' || f === '1') return 'f1';
+  if (f === f2 || f === 'field 2' || f === 'field2' || f === 'f2' || f === '2') return 'f2';
   return null;
 }
 
@@ -478,14 +480,14 @@ function importCSV(text) {
     const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
     if (lines.length < 2) throw new Error('File appears empty or has no data rows.');
 
-    // Parse header (case-insensitive)
-    const header = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const col = name => header.indexOf(name);
-    const iDate  = col('date');
-    const iTime  = col('time');
-    const iField = col('field');
-    const iHome  = col('home team');
-    const iAway  = col('away team');
+    // Parse header — strip BOM, case-insensitive, accept common variants
+    const header = lines[0].replace(/^﻿/, '').split(',').map(h => h.trim().toLowerCase());
+    const colAny = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i !== -1) return i; } return -1; };
+    const iDate  = colAny('date', 'game date', 'gamedate');
+    const iTime  = colAny('time', 'game time', 'gametime', 'start time', 'starttime');
+    const iField = colAny('field', 'field name', 'fieldname', 'location', 'venue');
+    const iHome  = colAny('home team', 'home', 'hometeam', 'home_team');
+    const iAway  = colAny('away team', 'away', 'awayteam', 'away_team', 'visitor', 'visitors');
 
     if ([iDate, iTime, iField, iHome, iAway].includes(-1)) {
       const missing = ['date','time','field','home team','away team']
@@ -537,13 +539,21 @@ function importCSV(text) {
       writes.push(saveSettings());
     }
 
+    const importedDates = Object.keys(byDay).sort();
+    const dayCount = importedDates.length;
+
     Promise.all(writes).then(() => {
       const gameCount = Object.values(byDay)
         .flatMap(d => Object.values(d).flatMap(t => Object.keys(t))).length;
       const timesMsg = newTimes.length ? ` Added ${newTimes.length} new time slot${newTimes.length !== 1 ? 's' : ''}.` : '';
-      const msg = `Imported ${gameCount} game${gameCount !== 1 ? 's' : ''} across ${writes.length - (newTimes.length ? 1 : 0)} game day${writes.length !== 1 ? 's' : ''}.${timesMsg}` +
-        (skipped ? ` (${skipped} row${skipped !== 1 ? 's' : ''} skipped)` : '');
-      showImportStatus(msg);
+      const skipMsg  = skipped ? ` (${skipped} row${skipped !== 1 ? 's' : ''} skipped)` : '';
+      showImportStatus(`Imported ${gameCount} game${gameCount !== 1 ? 's' : ''} across ${dayCount} game day${dayCount !== 1 ? 's' : ''}.${timesMsg}${skipMsg}`);
+
+      // Navigate to the first imported date so the user sees the result immediately
+      if (importedDates.length) {
+        const [y, m, d] = importedDates[0].split('-').map(Number);
+        currentWeekStart = new Date(y, m - 1, d);
+      }
       renderSchedule();
     });
 
