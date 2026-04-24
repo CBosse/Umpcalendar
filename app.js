@@ -21,7 +21,7 @@ const firebaseConfig = {
   appId: "1:327987648702:web:b0a2337dc099e6772aa6ef",
 };
 
-const db = getFirestore(initializeApp(firebaseConfig));
+const db = getFirestore(initializeApp(firebaseConfig), 'umpcalendar');
 
 // ── In-memory state ────────────────────────────────────────────────────────
 
