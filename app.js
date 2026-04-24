@@ -1,39 +1,120 @@
 'use strict';
 
-// ── State ──────────────────────────────────────────────────────────────────
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import {
+  getFirestore,
+  doc,
+  collection,
+  onSnapshot,
+  setDoc,
+  deleteDoc,
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
-const DEFAULT_STATE = {
-  gameDay: 3,           // 0=Sun … 6=Sat; default Wednesday
-  field1Name: 'Field 1',
-  field2Name: 'Field 2',
-  times: [],            // sorted "HH:MM" strings
-  umps: [],             // [{ id, name, phone }]
-  // assignments: { "YYYY-MM-DD": { "HH:MM": { f1: umpId|"", f2: umpId|"" } } }
-  assignments: {},
+// ── Firebase setup ─────────────────────────────────────────────────────────
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB_qR9FLOCc0uRKmBNmiNBAoAq98tlZ1WU",
+  authDomain: "bosse-testing.firebaseapp.com",
+  projectId: "bosse-testing",
+  storageBucket: "bosse-testing.firebasestorage.app",
+  messagingSenderId: "327987648702",
+  appId: "1:327987648702:web:b0a2337dc099e6772aa6ef",
 };
 
-let state = loadState();
-let currentWeekStart = getGameDayDate(new Date(), state.gameDay);
+const db = getFirestore(initializeApp(firebaseConfig));
 
-// ── Persistence ────────────────────────────────────────────────────────────
+// ── In-memory state (kept in sync by Firestore listeners) ──────────────────
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem('umpScheduler');
-    return raw ? { ...DEFAULT_STATE, ...JSON.parse(raw) } : { ...DEFAULT_STATE };
-  } catch {
-    return { ...DEFAULT_STATE };
+const state = {
+  gameDay:    3,          // 0=Sun … 6=Sat
+  field1Name: 'Field 1',
+  field2Name: 'Field 2',
+  times:      [],         // sorted "HH:MM" strings
+  umps:       [],         // [{ id, name, phone }]
+  // { "YYYY-MM-DD": { "HH:MM": { f1: umpId|"", f2: umpId|"" } } }
+  assignments: {},
+  _ready: { settings: false, umps: false, assignments: false },
+};
+
+let currentWeekStart = null;
+
+// ── Firestore write helpers ────────────────────────────────────────────────
+
+function saveSettings() {
+  return setDoc(doc(db, 'config', 'settings'), {
+    gameDay:    state.gameDay,
+    field1Name: state.field1Name,
+    field2Name: state.field2Name,
+    times:      state.times,
+  });
+}
+
+function saveUmp(ump) {
+  return setDoc(doc(db, 'umps', ump.id), { name: ump.name, phone: ump.phone });
+}
+
+function deleteUmp(id) {
+  return deleteDoc(doc(db, 'umps', id));
+}
+
+function saveAssignment(dayKey, slots) {
+  if (Object.keys(slots).length === 0) return deleteDoc(doc(db, 'assignments', dayKey));
+  return setDoc(doc(db, 'assignments', dayKey), slots);
+}
+
+// ── Firestore real-time listeners ──────────────────────────────────────────
+
+function checkReady() {
+  const r = state._ready;
+  if (r.settings && r.umps && r.assignments) {
+    document.getElementById('loading-overlay').style.display = 'none';
+    if (!currentWeekStart) currentWeekStart = getGameDayDate(new Date(), state.gameDay);
+    renderCurrentTab();
   }
 }
 
-function saveState() {
-  localStorage.setItem('umpScheduler', JSON.stringify(state));
+onSnapshot(doc(db, 'config', 'settings'), snap => {
+  if (snap.exists()) {
+    const d = snap.data();
+    const prevDay      = state.gameDay;
+    state.gameDay      = d.gameDay      ?? 3;
+    state.field1Name   = d.field1Name   ?? 'Field 1';
+    state.field2Name   = d.field2Name   ?? 'Field 2';
+    state.times        = d.times        ?? [];
+    if (currentWeekStart && prevDay !== state.gameDay) {
+      currentWeekStart = getGameDayDate(new Date(), state.gameDay);
+    }
+    // Keep settings UI in sync for other users viewing that tab
+    document.getElementById('game-day-select').value = state.gameDay;
+    document.getElementById('field1-name').value     = state.field1Name;
+    document.getElementById('field2-name').value     = state.field2Name;
+  }
+  state._ready.settings = true;
+  checkReady();
+  if (allReady()) renderCurrentTab();
+}, err => console.error('settings listener:', err));
+
+onSnapshot(collection(db, 'umps'), snap => {
+  state.umps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  state._ready.umps = true;
+  checkReady();
+  if (allReady()) renderCurrentTab();
+}, err => console.error('umps listener:', err));
+
+onSnapshot(collection(db, 'assignments'), snap => {
+  state.assignments = {};
+  snap.docs.forEach(d => { state.assignments[d.id] = d.data(); });
+  state._ready.assignments = true;
+  checkReady();
+  if (allReady()) renderCurrentTab();
+}, err => console.error('assignments listener:', err));
+
+function allReady() {
+  return state._ready.settings && state._ready.umps && state._ready.assignments;
 }
 
 // ── Date helpers ───────────────────────────────────────────────────────────
 
-// Returns the Date of the nearest upcoming (or same-day) occurrence of dayOfWeek
-// relative to `from`, then steps by `weekOffset` weeks.
 function getGameDayDate(from, dayOfWeek, weekOffset = 0) {
   const d = new Date(from);
   d.setHours(0, 0, 0, 0);
@@ -55,11 +136,22 @@ function formatDate(date) {
 function formatTime(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';
-  const hour = h % 12 || 12;
+  const hour   = h % 12 || 12;
   return `${hour}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
-// ── Tab switching ──────────────────────────────────────────────────────────
+// ── Tab routing ────────────────────────────────────────────────────────────
+
+function activeTab() {
+  return document.querySelector('.tab.active')?.dataset.tab ?? 'schedule';
+}
+
+function renderCurrentTab() {
+  const tab = activeTab();
+  if (tab === 'schedule') renderSchedule();
+  if (tab === 'umps')     renderUmps();
+  if (tab === 'settings') renderTimes();
+}
 
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -67,63 +159,47 @@ document.querySelectorAll('.tab').forEach(btn => {
     document.querySelectorAll('.tab-content').forEach(s => s.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-    if (btn.dataset.tab === 'schedule') renderSchedule();
-    if (btn.dataset.tab === 'umps') renderUmps();
+    renderCurrentTab();
   });
 });
 
-// ── Settings Tab ───────────────────────────────────────────────────────────
+// ── Settings tab ───────────────────────────────────────────────────────────
 
-const gameDaySelect = document.getElementById('game-day-select');
-const field1Input   = document.getElementById('field1-name');
-const field2Input   = document.getElementById('field2-name');
-const newTimeInput  = document.getElementById('new-time-input');
-
-function initSettings() {
-  gameDaySelect.value = state.gameDay;
-  field1Input.value   = state.field1Name;
-  field2Input.value   = state.field2Name;
-  renderTimes();
-}
-
-gameDaySelect.addEventListener('change', () => {
-  state.gameDay = parseInt(gameDaySelect.value, 10);
+document.getElementById('game-day-select').addEventListener('change', e => {
+  state.gameDay    = parseInt(e.target.value, 10);
   currentWeekStart = getGameDayDate(new Date(), state.gameDay);
-  saveState();
+  saveSettings();
 });
 
 document.getElementById('save-fields-btn').addEventListener('click', () => {
-  const n1 = field1Input.value.trim() || 'Field 1';
-  const n2 = field2Input.value.trim() || 'Field 2';
-  state.field1Name = n1;
-  state.field2Name = n2;
-  saveState();
-  document.getElementById('field1-header').textContent = n1;
-  document.getElementById('field2-header').textContent = n2;
-  field1Input.value = n1;
-  field2Input.value = n2;
+  state.field1Name = document.getElementById('field1-name').value.trim() || 'Field 1';
+  state.field2Name = document.getElementById('field2-name').value.trim() || 'Field 2';
+  document.getElementById('field1-name').value = state.field1Name;
+  document.getElementById('field2-name').value = state.field2Name;
+  saveSettings();
 });
 
 document.getElementById('add-time-btn').addEventListener('click', addTime);
-newTimeInput.addEventListener('keydown', e => { if (e.key === 'Enter') addTime(); });
+document.getElementById('new-time-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addTime();
+});
 
 function addTime() {
-  const val = newTimeInput.value;
-  if (!val) return;
-  if (state.times.includes(val)) { newTimeInput.value = ''; return; }
+  const input = document.getElementById('new-time-input');
+  const val   = input.value;
+  if (!val || state.times.includes(val)) { input.value = ''; return; }
   state.times.push(val);
   state.times.sort();
-  saveState();
-  newTimeInput.value = '';
-  renderTimes();
+  input.value = '';
+  saveSettings();
 }
 
 function removeTime(hhmm) {
   state.times = state.times.filter(t => t !== hhmm);
-  // Remove assignments for this time across all days
-  Object.values(state.assignments).forEach(day => { delete day[hhmm]; });
-  saveState();
-  renderTimes();
+  const writes = Object.entries(state.assignments)
+    .filter(([, slots]) => hhmm in slots)
+    .map(([dayKey, slots]) => { delete slots[hhmm]; return saveAssignment(dayKey, slots); });
+  Promise.all([saveSettings(), ...writes]);
 }
 
 function renderTimes() {
@@ -136,57 +212,55 @@ function renderTimes() {
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="info"><span class="name">${formatTime(t)}</span></span>
-      <button class="remove-btn" data-time="${t}">Remove</button>`;
+      <button class="remove-btn">Remove</button>`;
     li.querySelector('.remove-btn').addEventListener('click', () => removeTime(t));
     list.appendChild(li);
   });
 }
 
-// ── Umpires Tab ────────────────────────────────────────────────────────────
-
-const umpNameInput  = document.getElementById('ump-name-input');
-const umpPhoneInput = document.getElementById('ump-phone-input');
+// ── Umpires tab ────────────────────────────────────────────────────────────
 
 document.getElementById('add-ump-btn').addEventListener('click', addUmp);
-umpNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') addUmp(); });
+document.getElementById('ump-name-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addUmp();
+});
 
 function addUmp() {
-  const name = umpNameInput.value.trim();
+  const nameEl  = document.getElementById('ump-name-input');
+  const phoneEl = document.getElementById('ump-phone-input');
+  const name    = nameEl.value.trim();
   if (!name) return;
-  const phone = umpPhoneInput.value.trim();
-  const id = `ump_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  state.umps.push({ id, name, phone });
-  saveState();
-  umpNameInput.value  = '';
-  umpPhoneInput.value = '';
-  umpNameInput.focus();
-  renderUmps();
+  const phone = phoneEl.value.trim();
+  const id    = `ump_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  nameEl.value  = '';
+  phoneEl.value = '';
+  nameEl.focus();
+  saveUmp({ id, name, phone });  // listener will add it to state.umps
 }
 
 function removeUmp(id) {
   if (!confirm('Remove this umpire? Their assignments will be cleared.')) return;
-  state.umps = state.umps.filter(u => u.id !== id);
-  // Clear assignments for this ump
-  Object.values(state.assignments).forEach(day => {
-    Object.values(day).forEach(slot => {
-      if (slot.f1 === id) slot.f1 = '';
-      if (slot.f2 === id) slot.f2 = '';
+  const writes = [deleteUmp(id)];
+  Object.entries(state.assignments).forEach(([dayKey, slots]) => {
+    let changed = false;
+    Object.values(slots).forEach(slot => {
+      if (slot.f1 === id) { slot.f1 = ''; changed = true; }
+      if (slot.f2 === id) { slot.f2 = ''; changed = true; }
     });
+    if (changed) writes.push(saveAssignment(dayKey, slots));
   });
-  saveState();
-  renderUmps();
-  renderSchedule();
+  Promise.all(writes);
 }
 
 function countAssignments(umpId) {
-  let count = 0;
-  Object.values(state.assignments).forEach(day => {
+  let n = 0;
+  Object.values(state.assignments).forEach(day =>
     Object.values(day).forEach(slot => {
-      if (slot.f1 === umpId) count++;
-      if (slot.f2 === umpId) count++;
-    });
-  });
-  return count;
+      if (slot.f1 === umpId) n++;
+      if (slot.f2 === umpId) n++;
+    })
+  );
+  return n;
 }
 
 function renderUmps() {
@@ -196,21 +270,21 @@ function renderUmps() {
   if (state.umps.length === 0) { msg.style.display = ''; return; }
   msg.style.display = 'none';
   state.umps.forEach(u => {
-    const games = countAssignments(u.id);
+    const n  = countAssignments(u.id);
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="info">
         <span class="name">${escHtml(u.name)}</span>
         ${u.phone ? `<span class="sub">${escHtml(u.phone)}</span>` : ''}
       </span>
-      <span class="game-count">${games} game${games !== 1 ? 's' : ''}</span>
-      <button class="remove-btn" data-id="${u.id}">Remove</button>`;
+      <span class="game-count">${n} game${n !== 1 ? 's' : ''}</span>
+      <button class="remove-btn">Remove</button>`;
     li.querySelector('.remove-btn').addEventListener('click', () => removeUmp(u.id));
     list.appendChild(li);
   });
 }
 
-// ── Schedule Tab ───────────────────────────────────────────────────────────
+// ── Schedule tab ───────────────────────────────────────────────────────────
 
 document.getElementById('prev-week').addEventListener('click', () => {
   currentWeekStart = getGameDayDate(currentWeekStart, state.gameDay, -1);
@@ -224,35 +298,22 @@ document.getElementById('next-week').addEventListener('click', () => {
 
 document.getElementById('clear-week-btn').addEventListener('click', () => {
   if (!confirm('Clear all assignments for this game day?')) return;
-  delete state.assignments[dateKey(currentWeekStart)];
-  saveState();
-  renderSchedule();
+  const key = dateKey(currentWeekStart);
+  delete state.assignments[key];
+  deleteDoc(doc(db, 'assignments', key));
 });
 
 document.getElementById('copy-prev-btn').addEventListener('click', () => {
-  const prevDate  = getGameDayDate(currentWeekStart, state.gameDay, -1);
-  const prevKey   = dateKey(prevDate);
-  const curKey    = dateKey(currentWeekStart);
-  const prevData  = state.assignments[prevKey];
+  const prevKey  = dateKey(getGameDayDate(currentWeekStart, state.gameDay, -1));
+  const curKey   = dateKey(currentWeekStart);
+  const prevData = state.assignments[prevKey];
   if (!prevData) { alert('No assignments found for the previous game day.'); return; }
-  if (!confirm('Copy previous week\'s umpire assignments to this week?')) return;
-  state.assignments[curKey] = JSON.parse(JSON.stringify(prevData));
-  saveState();
-  renderSchedule();
+  if (!confirm("Copy previous week's umpire assignments to this week?")) return;
+  const copy = JSON.parse(JSON.stringify(prevData));
+  saveAssignment(curKey, copy);
 });
 
 document.getElementById('print-btn').addEventListener('click', () => window.print());
-
-function getAssignment(dayKey, time) {
-  return state.assignments[dayKey]?.[time] ?? { f1: '', f2: '' };
-}
-
-function setAssignment(dayKey, time, field, umpId) {
-  if (!state.assignments[dayKey]) state.assignments[dayKey] = {};
-  if (!state.assignments[dayKey][time]) state.assignments[dayKey][time] = { f1: '', f2: '' };
-  state.assignments[dayKey][time][field] = umpId;
-  saveState();
-}
 
 function buildUmpOptions(selectedId) {
   let opts = '<option value="">— Unassigned —</option>';
@@ -263,13 +324,11 @@ function buildUmpOptions(selectedId) {
 }
 
 function renderSchedule() {
-  // Sync field headers
+  if (!currentWeekStart) return;
+
   document.getElementById('field1-header').textContent = state.field1Name;
   document.getElementById('field2-header').textContent = state.field2Name;
-
-  // Make sure currentWeekStart is on the correct day of week
   currentWeekStart = getGameDayDate(currentWeekStart, state.gameDay);
-
   document.getElementById('week-label').textContent = formatDate(currentWeekStart);
 
   const tbody   = document.getElementById('schedule-body');
@@ -288,29 +347,21 @@ function renderSchedule() {
   const dayKey = dateKey(currentWeekStart);
 
   state.times.forEach(time => {
-    const asgn = getAssignment(dayKey, time);
-    const tr = document.createElement('tr');
+    const slot = state.assignments[dayKey]?.[time] ?? { f1: '', f2: '' };
+    const tr   = document.createElement('tr');
     tr.innerHTML = `
       <td class="time-cell">${formatTime(time)}</td>
-      <td>
-        <select data-time="${time}" data-field="f1">
-          ${buildUmpOptions(asgn.f1)}
-        </select>
-      </td>
-      <td>
-        <select data-time="${time}" data-field="f2">
-          ${buildUmpOptions(asgn.f2)}
-        </select>
-      </td>`;
+      <td><select data-time="${time}" data-field="f1">${buildUmpOptions(slot.f1)}</select></td>
+      <td><select data-time="${time}" data-field="f2">${buildUmpOptions(slot.f2)}</select></td>`;
 
     tr.querySelectorAll('select').forEach(sel => {
-      if (sel.value) sel.classList.add('assigned');
+      sel.classList.toggle('assigned', !!sel.value);
       sel.addEventListener('change', () => {
-        setAssignment(dayKey, sel.dataset.time, sel.dataset.field, sel.value);
+        if (!state.assignments[dayKey])        state.assignments[dayKey] = {};
+        if (!state.assignments[dayKey][time])  state.assignments[dayKey][time] = { f1: '', f2: '' };
+        state.assignments[dayKey][time][sel.dataset.field] = sel.value;
         sel.classList.toggle('assigned', !!sel.value);
-        if (document.querySelector('.tab[data-tab="umps"]').classList.contains('active')) {
-          renderUmps();
-        }
+        saveAssignment(dayKey, state.assignments[dayKey]);
       });
     });
 
@@ -321,10 +372,9 @@ function renderSchedule() {
 // ── Utilities ──────────────────────────────────────────────────────────────
 
 function escHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
-
-// ── Boot ───────────────────────────────────────────────────────────────────
-
-initSettings();
-renderSchedule();

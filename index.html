@@ -95,6 +95,14 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <!-- Loading overlay shown until Firestore data arrives -->
+  <div id="loading-overlay">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <p>Connecting…</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>
