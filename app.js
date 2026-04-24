@@ -23,20 +23,42 @@ const firebaseConfig = {
 
 const db = getFirestore(initializeApp(firebaseConfig));
 
-// ── In-memory state (kept in sync by Firestore listeners) ──────────────────
+// ── In-memory state ────────────────────────────────────────────────────────
 
 const state = {
-  gameDay:    3,          // 0=Sun … 6=Sat
-  field1Name: 'Field 1',
-  field2Name: 'Field 2',
-  times:      [],         // sorted "HH:MM" strings
-  umps:       [],         // [{ id, name, phone }]
-  // { "YYYY-MM-DD": { "HH:MM": { f1: umpId|"", f2: umpId|"" } } }
+  gameDay:     3,
+  field1Name:  'Field 1',
+  field2Name:  'Field 2',
+  times:       [],
+  umps:        [],
+  // { "YYYY-MM-DD": { "HH:MM": { f1: {ump,home,away}, f2: {ump,home,away} } } }
   assignments: {},
   _ready: { settings: false, umps: false, assignments: false },
 };
 
 let currentWeekStart = null;
+
+// ── Data model helpers ─────────────────────────────────────────────────────
+
+// Normalize a single field slot — handles both old string format and new object format
+function normalizeFieldSlot(raw) {
+  if (!raw || raw === '') return { ump: '', home: '', away: '' };
+  if (typeof raw === 'string') return { ump: raw, home: '', away: '' };
+  return { ump: raw.ump ?? '', home: raw.home ?? '', away: raw.away ?? '' };
+}
+
+function getFieldSlot(dayKey, time, field) {
+  const raw = state.assignments[dayKey]?.[time]?.[field];
+  return normalizeFieldSlot(raw);
+}
+
+function setFieldSlot(dayKey, time, field, patch) {
+  if (!state.assignments[dayKey])        state.assignments[dayKey] = {};
+  if (!state.assignments[dayKey][time])  state.assignments[dayKey][time] = {};
+  const current = normalizeFieldSlot(state.assignments[dayKey][time][field]);
+  state.assignments[dayKey][time][field] = { ...current, ...patch };
+  saveAssignment(dayKey, state.assignments[dayKey]);
+}
 
 // ── Firestore write helpers ────────────────────────────────────────────────
 
@@ -64,9 +86,12 @@ function saveAssignment(dayKey, slots) {
 
 // ── Firestore real-time listeners ──────────────────────────────────────────
 
+function allReady() {
+  return state._ready.settings && state._ready.umps && state._ready.assignments;
+}
+
 function checkReady() {
-  const r = state._ready;
-  if (r.settings && r.umps && r.assignments) {
+  if (allReady()) {
     document.getElementById('loading-overlay').style.display = 'none';
     if (!currentWeekStart) currentWeekStart = getGameDayDate(new Date(), state.gameDay);
     renderCurrentTab();
@@ -84,7 +109,6 @@ onSnapshot(doc(db, 'config', 'settings'), snap => {
     if (currentWeekStart && prevDay !== state.gameDay) {
       currentWeekStart = getGameDayDate(new Date(), state.gameDay);
     }
-    // Keep settings UI in sync for other users viewing that tab
     document.getElementById('game-day-select').value = state.gameDay;
     document.getElementById('field1-name').value     = state.field1Name;
     document.getElementById('field2-name').value     = state.field2Name;
@@ -108,10 +132,6 @@ onSnapshot(collection(db, 'assignments'), snap => {
   checkReady();
   if (allReady()) renderCurrentTab();
 }, err => console.error('assignments listener:', err));
-
-function allReady() {
-  return state._ready.settings && state._ready.umps && state._ready.assignments;
-}
 
 // ── Date helpers ───────────────────────────────────────────────────────────
 
@@ -235,7 +255,7 @@ function addUmp() {
   nameEl.value  = '';
   phoneEl.value = '';
   nameEl.focus();
-  saveUmp({ id, name, phone });  // listener will add it to state.umps
+  saveUmp({ id, name, phone });
 }
 
 function removeUmp(id) {
@@ -243,9 +263,11 @@ function removeUmp(id) {
   const writes = [deleteUmp(id)];
   Object.entries(state.assignments).forEach(([dayKey, slots]) => {
     let changed = false;
-    Object.values(slots).forEach(slot => {
-      if (slot.f1 === id) { slot.f1 = ''; changed = true; }
-      if (slot.f2 === id) { slot.f2 = ''; changed = true; }
+    Object.values(slots).forEach(timeSlot => {
+      ['f1', 'f2'].forEach(f => {
+        const slot = normalizeFieldSlot(timeSlot[f]);
+        if (slot.ump === id) { timeSlot[f] = { ...slot, ump: '' }; changed = true; }
+      });
     });
     if (changed) writes.push(saveAssignment(dayKey, slots));
   });
@@ -255,10 +277,11 @@ function removeUmp(id) {
 function countAssignments(umpId) {
   let n = 0;
   Object.values(state.assignments).forEach(day =>
-    Object.values(day).forEach(slot => {
-      if (slot.f1 === umpId) n++;
-      if (slot.f2 === umpId) n++;
-    })
+    Object.values(day).forEach(timeSlot =>
+      ['f1', 'f2'].forEach(f => {
+        if (normalizeFieldSlot(timeSlot[f]).ump === umpId) n++;
+      })
+    )
   );
   return n;
 }
@@ -297,7 +320,7 @@ document.getElementById('next-week').addEventListener('click', () => {
 });
 
 document.getElementById('clear-week-btn').addEventListener('click', () => {
-  if (!confirm('Clear all assignments for this game day?')) return;
+  if (!confirm('Clear all assignments and team names for this game day?')) return;
   const key = dateKey(currentWeekStart);
   delete state.assignments[key];
   deleteDoc(doc(db, 'assignments', key));
@@ -308,12 +331,147 @@ document.getElementById('copy-prev-btn').addEventListener('click', () => {
   const curKey   = dateKey(currentWeekStart);
   const prevData = state.assignments[prevKey];
   if (!prevData) { alert('No assignments found for the previous game day.'); return; }
-  if (!confirm("Copy previous week's umpire assignments to this week?")) return;
+  if (!confirm("Copy previous week's assignments to this week?")) return;
   const copy = JSON.parse(JSON.stringify(prevData));
   saveAssignment(curKey, copy);
 });
 
 document.getElementById('print-btn').addEventListener('click', () => window.print());
+
+// ── CSV import ─────────────────────────────────────────────────────────────
+
+document.getElementById('import-csv-btn').addEventListener('click', () => {
+  document.getElementById('csv-file-input').click();
+});
+
+document.getElementById('csv-file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = ''; // reset so same file can be re-imported
+  const reader = new FileReader();
+  reader.onload = ev => importCSV(ev.target.result);
+  reader.readAsText(file);
+});
+
+function normalizeCSVTime(raw) {
+  raw = raw.trim();
+  // HH:MM 24-hour
+  const m24 = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) return `${m24[1].padStart(2, '0')}:${m24[2]}`;
+  // H:MM AM/PM
+  const m12 = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const mins = m12[2];
+    const pm   = m12[3].toUpperCase() === 'PM';
+    if (pm && h !== 12) h += 12;
+    if (!pm && h === 12) h = 0;
+    return `${h.toString().padStart(2, '0')}:${mins}`;
+  }
+  return null;
+}
+
+function matchFieldName(raw) {
+  const f = raw.trim().toLowerCase();
+  if (f === state.field1Name.toLowerCase() || f === 'field 1' || f === '1') return 'f1';
+  if (f === state.field2Name.toLowerCase() || f === 'field 2' || f === '2') return 'f2';
+  return null;
+}
+
+function showImportStatus(msg, isError = false) {
+  const el = document.getElementById('import-status');
+  el.textContent = msg;
+  el.className   = `import-status ${isError ? 'import-error' : 'import-ok'}`;
+  el.style.display = '';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+function importCSV(text) {
+  try {
+    const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) throw new Error('File appears empty or has no data rows.');
+
+    // Parse header (case-insensitive)
+    const header = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const col = name => header.indexOf(name);
+    const iDate  = col('date');
+    const iTime  = col('time');
+    const iField = col('field');
+    const iHome  = col('home team');
+    const iAway  = col('away team');
+
+    if ([iDate, iTime, iField, iHome, iAway].includes(-1)) {
+      const missing = ['date','time','field','home team','away team']
+        .filter((_, i) => [iDate,iTime,iField,iHome,iAway][i] === -1);
+      throw new Error(`Missing column(s): ${missing.join(', ')}`);
+    }
+
+    const byDay = {};  // { "YYYY-MM-DD": { "HH:MM": { f1|f2: { home, away } } } }
+    let skipped = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+      // Handle quoted fields simply by splitting on comma outside quotes
+      const cols = splitCSVLine(lines[i]);
+      if (cols.length < 5) { skipped++; continue; }
+
+      const date  = cols[iDate]?.trim();
+      const time  = normalizeCSVTime(cols[iTime] ?? '');
+      const field = matchFieldName(cols[iField] ?? '');
+      const home  = cols[iHome]?.trim() ?? '';
+      const away  = cols[iAway]?.trim() ?? '';
+
+      if (!date || !time || !field) { skipped++; continue; }
+      if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) { skipped++; continue; }
+
+      if (!byDay[date]) byDay[date] = {};
+      if (!byDay[date][time]) byDay[date][time] = {};
+      byDay[date][time][field] = { home, away };
+    }
+
+    const writes = Object.entries(byDay).map(([dayKey, newSlots]) => {
+      // Merge into existing assignments, preserving ump selections
+      const existing = state.assignments[dayKey] ?? {};
+      Object.entries(newSlots).forEach(([time, fields]) => {
+        if (!existing[time]) existing[time] = {};
+        Object.entries(fields).forEach(([f, teams]) => {
+          const cur = normalizeFieldSlot(existing[time][f]);
+          existing[time][f] = { ump: cur.ump, home: teams.home, away: teams.away };
+        });
+      });
+      state.assignments[dayKey] = existing;
+      return saveAssignment(dayKey, existing);
+    });
+
+    Promise.all(writes).then(() => {
+      const gameCount = Object.values(byDay)
+        .flatMap(d => Object.values(d).flatMap(t => Object.keys(t))).length;
+      const msg = `Imported ${gameCount} game${gameCount !== 1 ? 's' : ''} across ${writes.length} game day${writes.length !== 1 ? 's' : ''}.` +
+        (skipped ? ` (${skipped} row${skipped !== 1 ? 's' : ''} skipped)` : '');
+      showImportStatus(msg);
+      renderSchedule();
+    });
+
+  } catch (err) {
+    showImportStatus(`Import failed: ${err.message}`, true);
+  }
+}
+
+// Minimal CSV line splitter that handles double-quoted fields
+function splitCSVLine(line) {
+  const cols = [];
+  let cur = '', inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (ch === ',' && !inQuote) { cols.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  cols.push(cur);
+  return cols;
+}
+
+// ── Schedule rendering ─────────────────────────────────────────────────────
 
 function buildUmpOptions(selectedId) {
   let opts = '<option value="">— Unassigned —</option>';
@@ -347,21 +505,25 @@ function renderSchedule() {
   const dayKey = dateKey(currentWeekStart);
 
   state.times.forEach(time => {
-    const slot = state.assignments[dayKey]?.[time] ?? { f1: '', f2: '' };
-    const tr   = document.createElement('tr');
+    const f1 = getFieldSlot(dayKey, time, 'f1');
+    const f2 = getFieldSlot(dayKey, time, 'f2');
+    const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="time-cell">${formatTime(time)}</td>
-      <td><select data-time="${time}" data-field="f1">${buildUmpOptions(slot.f1)}</select></td>
-      <td><select data-time="${time}" data-field="f2">${buildUmpOptions(slot.f2)}</select></td>`;
+      <td class="game-cell">
+        ${matchupHTML(f1)}
+        <select data-time="${time}" data-field="f1">${buildUmpOptions(f1.ump)}</select>
+      </td>
+      <td class="game-cell">
+        ${matchupHTML(f2)}
+        <select data-time="${time}" data-field="f2">${buildUmpOptions(f2.ump)}</select>
+      </td>`;
 
     tr.querySelectorAll('select').forEach(sel => {
       sel.classList.toggle('assigned', !!sel.value);
       sel.addEventListener('change', () => {
-        if (!state.assignments[dayKey])        state.assignments[dayKey] = {};
-        if (!state.assignments[dayKey][time])  state.assignments[dayKey][time] = { f1: '', f2: '' };
-        state.assignments[dayKey][time][sel.dataset.field] = sel.value;
+        setFieldSlot(dayKey, sel.dataset.time, sel.dataset.field, { ump: sel.value });
         sel.classList.toggle('assigned', !!sel.value);
-        saveAssignment(dayKey, state.assignments[dayKey]);
       });
     });
 
@@ -369,10 +531,17 @@ function renderSchedule() {
   });
 }
 
+function matchupHTML(slot) {
+  if (!slot.home && !slot.away) return '';
+  const home = escHtml(slot.home || '?');
+  const away = escHtml(slot.away || '?');
+  return `<div class="matchup"><span class="team home">${home}</span><span class="vs">vs</span><span class="team away">${away}</span></div>`;
+}
+
 // ── Utilities ──────────────────────────────────────────────────────────────
 
 function escHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
