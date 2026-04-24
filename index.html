@@ -12,7 +12,6 @@
   </header>
 
   <main>
-    <!-- Tabs -->
     <nav class="tabs">
       <button class="tab active" data-tab="schedule">Schedule</button>
       <button class="tab" data-tab="umps">Umpires</button>
@@ -21,28 +20,20 @@
 
     <!-- Schedule Tab -->
     <section id="tab-schedule" class="tab-content active">
-      <div class="week-nav">
-        <button id="prev-week">&larr;</button>
-        <h2 id="week-label"></h2>
-        <button id="next-week">&rarr;</button>
+      <div class="date-nav">
+        <button id="prev-day">&larr;</button>
+        <input type="date" id="schedule-date" />
+        <button id="next-day">&rarr;</button>
       </div>
       <div class="schedule-grid-wrapper">
         <table class="schedule-grid" id="schedule-table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th id="field1-header">Field 1</th>
-              <th id="field2-header">Field 2</th>
-            </tr>
-          </thead>
+          <thead id="schedule-head"></thead>
           <tbody id="schedule-body"></tbody>
         </table>
-        <p id="no-slots-msg" class="muted" style="display:none;">
-          No game times configured. Go to <strong>Settings</strong> to add time slots.
-        </p>
+        <p id="no-slots-msg" class="muted" style="display:none;"></p>
       </div>
       <div class="schedule-actions">
-        <button id="clear-week-btn" class="btn-danger">Clear This Week</button>
+        <button id="clear-day-btn" class="btn-danger">Clear This Day</button>
         <button id="copy-prev-btn" class="btn-secondary">Copy Previous Week</button>
         <button id="import-csv-btn" class="btn-secondary">Import CSV</button>
         <button id="print-btn" class="btn-secondary">Print Schedule</button>
@@ -65,25 +56,13 @@
     <!-- Settings Tab -->
     <section id="tab-settings" class="tab-content">
       <div class="settings-group">
-        <label>Game Day of the Week</label>
-        <select id="game-day-select">
-          <option value="0">Sunday</option>
-          <option value="1">Monday</option>
-          <option value="2">Tuesday</option>
-          <option value="3">Wednesday</option>
-          <option value="4">Thursday</option>
-          <option value="5">Friday</option>
-          <option value="6">Saturday</option>
-        </select>
-      </div>
-
-      <div class="settings-group">
-        <label>Field Names</label>
-        <div class="field-names">
-          <input id="field1-name" type="text" placeholder="Field 1 name" maxlength="30" />
-          <input id="field2-name" type="text" placeholder="Field 2 name" maxlength="30" />
-          <button id="save-fields-btn" class="btn-primary">Save</button>
+        <label>Fields</label>
+        <div class="add-form">
+          <input id="new-field-input" type="text" placeholder="Field name" maxlength="40" />
+          <button id="add-field-btn" class="btn-primary">Add Field</button>
         </div>
+        <ul id="fields-list" class="item-list"></ul>
+        <p id="no-fields-msg" class="muted" style="display:none;">No fields added yet.</p>
       </div>
 
       <div class="settings-group">
@@ -98,10 +77,8 @@
     </section>
   </main>
 
-  <!-- Database error banner -->
   <div id="db-banner" class="db-banner" style="display:none;"></div>
 
-  <!-- Loading overlay shown until Firestore data arrives -->
   <div id="loading-overlay">
     <div class="loading-box">
       <div class="spinner"></div>
