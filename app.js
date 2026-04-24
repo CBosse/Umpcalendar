@@ -529,10 +529,19 @@ function importCSV(text) {
       return saveAssignment(dayKey, existing);
     });
 
+    // Add any time slots from the CSV that aren't already in settings
+    const csvTimes = [...new Set(Object.values(byDay).flatMap(d => Object.keys(d)))];
+    const newTimes = csvTimes.filter(t => !state.times.includes(t));
+    if (newTimes.length) {
+      state.times = [...state.times, ...newTimes].sort();
+      writes.push(saveSettings());
+    }
+
     Promise.all(writes).then(() => {
       const gameCount = Object.values(byDay)
         .flatMap(d => Object.values(d).flatMap(t => Object.keys(t))).length;
-      const msg = `Imported ${gameCount} game${gameCount !== 1 ? 's' : ''} across ${writes.length} game day${writes.length !== 1 ? 's' : ''}.` +
+      const timesMsg = newTimes.length ? ` Added ${newTimes.length} new time slot${newTimes.length !== 1 ? 's' : ''}.` : '';
+      const msg = `Imported ${gameCount} game${gameCount !== 1 ? 's' : ''} across ${writes.length - (newTimes.length ? 1 : 0)} game day${writes.length !== 1 ? 's' : ''}.${timesMsg}` +
         (skipped ? ` (${skipped} row${skipped !== 1 ? 's' : ''} skipped)` : '');
       showImportStatus(msg);
       renderSchedule();
