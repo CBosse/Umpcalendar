@@ -79,7 +79,12 @@ function saveSettings() {
 }
 
 function saveUmp(ump) {
-  return firestoreWrite(setDoc(doc(db, 'umps', ump.id), { name: ump.name, phone: ump.phone }));
+  return firestoreWrite(setDoc(doc(db, 'umps', ump.id), {
+    name:        ump.name,
+    phone:       ump.phone,
+    teams:       ump.teams       ?? [],
+    unavailable: ump.unavailable ?? [],
+  }));
 }
 
 function deleteUmp(id) {
@@ -176,7 +181,7 @@ onSnapshot(doc(db, 'config', 'settings'), snap => {
 }, err => showDbError(err));
 
 onSnapshot(collection(db, 'umps'), snap => {
-  state.umps = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  state.umps = snap.docs.map(d => ({ id: d.id, teams: [], unavailable: [], ...d.data() }));
   state._ready.umps = true;
   checkReady();
   if (allReady()) renderCurrentTab();
@@ -325,6 +330,26 @@ function renderTimes() {
   });
 }
 
+// ── Conflict detection ─────────────────────────────────────────────────────
+
+function isUmpConflicted(ump, dateStr, time) {
+  if (ump.unavailable?.includes(dateStr)) return true;
+  if (ump.teams?.length) {
+    const slots = state.assignments[dateStr]?.[time];
+    if (slots) {
+      for (const raw of Object.values(slots)) {
+        const slot = normalizeFieldSlot(raw);
+        for (const team of ump.teams) {
+          const t = team.trim().toLowerCase();
+          if (slot.home.trim().toLowerCase() === t ||
+              slot.away.trim().toLowerCase() === t) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 // ── Umpires tab ────────────────────────────────────────────────────────────
 
 document.getElementById('add-ump-btn').addEventListener('click', addUmp);
@@ -373,7 +398,15 @@ function countAssignments(umpId) {
   return n;
 }
 
+let _viewingUmpId = null;
+
 function renderUmps() {
+  if (_viewingUmpId) {
+    const ump = state.umps.find(u => u.id === _viewingUmpId);
+    if (ump) { showUmpDetail(ump); return; }
+    _viewingUmpId = null;
+  }
+
   document.getElementById('ump-list-view').style.display = '';
   document.getElementById('ump-detail-view').style.display = 'none';
 
@@ -392,17 +425,43 @@ function renderUmps() {
       </span>
       <span class="game-count">${n} game${n !== 1 ? 's' : ''}</span>
       <button class="remove-btn">Remove</button>`;
-    li.querySelector('.ump-name-btn').addEventListener('click', () => showUmpSchedule(u));
+    li.querySelector('.ump-name-btn').addEventListener('click', () => showUmpDetail(u));
     li.querySelector('.remove-btn').addEventListener('click', () => removeUmp(u.id));
     list.appendChild(li);
   });
 }
 
-function showUmpSchedule(ump) {
+function showUmpDetail(ump) {
+  _viewingUmpId = ump.id;
   document.getElementById('ump-list-view').style.display = 'none';
   document.getElementById('ump-detail-view').style.display = '';
-  document.getElementById('ump-detail-name').textContent = `${ump.name}'s Schedule`;
+  document.getElementById('ump-detail-name').textContent = ump.name;
 
+  // ── Teams ──
+  const teamsList = document.getElementById('ump-teams-list');
+  teamsList.innerHTML = '';
+  (ump.teams ?? []).forEach(team => {
+    const chip = document.createElement('span');
+    chip.className = 'ump-tag';
+    chip.innerHTML = `${escHtml(team)}<button class="remove-tag-btn" title="Remove team">&times;</button>`;
+    chip.querySelector('.remove-tag-btn').addEventListener('click', () => removeUmpTeam(ump.id, team));
+    teamsList.appendChild(chip);
+  });
+
+  // ── Unavailable dates ──
+  const unavailList = document.getElementById('ump-unavail-list');
+  unavailList.innerHTML = '';
+  (ump.unavailable ?? []).sort().forEach(dateStr => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const label = new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const chip = document.createElement('span');
+    chip.className = 'ump-tag';
+    chip.innerHTML = `${escHtml(label)}<button class="remove-tag-btn" title="Remove date">&times;</button>`;
+    chip.querySelector('.remove-tag-btn').addEventListener('click', () => removeUmpUnavailable(ump.id, dateStr));
+    unavailList.appendChild(chip);
+  });
+
+  // ── Schedule ──
   const content = document.getElementById('ump-detail-content');
   content.innerHTML = '';
 
@@ -417,7 +476,7 @@ function showUmpSchedule(ump) {
   });
 
   if (assignments.length === 0) {
-    content.innerHTML = '<p class="muted" style="margin-top:0.75rem;">No games assigned yet.</p>';
+    content.innerHTML = '<p class="muted" style="margin-top:0.5rem;">No games assigned yet.</p>';
     return;
   }
 
@@ -433,15 +492,12 @@ function showUmpSchedule(ump) {
     const label = new Date(y, m - 1, d).toLocaleDateString('en-US', {
       weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
     });
-
     const section = document.createElement('div');
     section.className = 'ump-schedule-day';
-
     const heading = document.createElement('div');
     heading.className = 'ump-schedule-date';
     heading.textContent = label;
     section.appendChild(heading);
-
     games.forEach(({ time, fieldName, slot }) => {
       const row = document.createElement('div');
       row.className = 'ump-schedule-row';
@@ -454,12 +510,61 @@ function showUmpSchedule(ump) {
         <span class="ump-sched-game">${gameText}</span>`;
       section.appendChild(row);
     });
-
     content.appendChild(section);
   });
 }
 
-document.getElementById('ump-back-btn').addEventListener('click', renderUmps);
+document.getElementById('ump-back-btn').addEventListener('click', () => {
+  _viewingUmpId = null;
+  renderUmps();
+});
+
+// ── Team & availability helpers ────────────────────────────────────────────
+
+function addUmpTeam(umpId, name) {
+  const ump = state.umps.find(u => u.id === umpId);
+  if (!ump || !name) return;
+  const teams = [...(ump.teams ?? [])];
+  if (teams.map(t => t.toLowerCase()).includes(name.toLowerCase())) return;
+  saveUmp({ ...ump, teams: [...teams, name] });
+}
+
+function removeUmpTeam(umpId, name) {
+  const ump = state.umps.find(u => u.id === umpId);
+  if (!ump) return;
+  saveUmp({ ...ump, teams: (ump.teams ?? []).filter(t => t !== name) });
+}
+
+function addUmpUnavailable(umpId, dateStr) {
+  const ump = state.umps.find(u => u.id === umpId);
+  if (!ump || !dateStr) return;
+  const unavailable = [...(ump.unavailable ?? [])];
+  if (unavailable.includes(dateStr)) return;
+  saveUmp({ ...ump, unavailable: [...unavailable, dateStr].sort() });
+}
+
+function removeUmpUnavailable(umpId, dateStr) {
+  const ump = state.umps.find(u => u.id === umpId);
+  if (!ump) return;
+  saveUmp({ ...ump, unavailable: (ump.unavailable ?? []).filter(d => d !== dateStr) });
+}
+
+document.getElementById('ump-add-team-btn').addEventListener('click', () => {
+  const input = document.getElementById('ump-team-input');
+  const name  = input.value.trim();
+  if (name && _viewingUmpId) { addUmpTeam(_viewingUmpId, name); input.value = ''; }
+});
+
+document.getElementById('ump-team-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('ump-add-team-btn').click();
+});
+
+document.getElementById('ump-add-unavail-btn').addEventListener('click', () => {
+  const input = document.getElementById('ump-unavail-input');
+  const dateStr = input.value;
+  if (dateStr && _viewingUmpId) { addUmpUnavailable(_viewingUmpId, dateStr); input.value = ''; }
+});
+
 
 // ── Schedule tab ───────────────────────────────────────────────────────────
 
@@ -698,9 +803,10 @@ document.querySelector('#game-edit-modal .modal-overlay').addEventListener('clic
 
 // ── Schedule rendering ─────────────────────────────────────────────────────
 
-function buildUmpOptions(selectedId) {
+function buildUmpOptions(selectedId, dateStr, time) {
   let opts = '<option value="">— Unassigned —</option>';
   state.umps.forEach(u => {
+    if (u.id !== selectedId && isUmpConflicted(u, dateStr, time)) return;
     opts += `<option value="${u.id}"${u.id === selectedId ? ' selected' : ''}>${escHtml(u.name)}</option>`;
   });
   return opts;
@@ -749,7 +855,7 @@ function buildGameCell(dateStr, time, fieldName) {
   const sel = document.createElement('select');
   sel.dataset.time  = time;
   sel.dataset.field = fieldName;
-  sel.innerHTML = buildUmpOptions(slot.ump);
+  sel.innerHTML = buildUmpOptions(slot.ump, dateStr, time);
   sel.classList.toggle('assigned', !!slot.ump);
   sel.addEventListener('change', () => {
     setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });

@@ -58,6 +58,26 @@
       <div id="ump-detail-view" style="display:none;">
         <button id="ump-back-btn" class="btn-secondary">&larr; Back</button>
         <h3 id="ump-detail-name" class="ump-detail-heading"></h3>
+
+        <div class="ump-settings-section">
+          <div class="ump-settings-group">
+            <span class="ump-settings-label">Teams</span>
+            <div id="ump-teams-list" class="ump-tag-list"></div>
+            <div class="ump-add-row">
+              <input id="ump-team-input" type="text" placeholder="Team name" maxlength="40" />
+              <button id="ump-add-team-btn" class="btn-primary">Add</button>
+            </div>
+          </div>
+          <div class="ump-settings-group">
+            <span class="ump-settings-label">Unavailable Dates</span>
+            <div id="ump-unavail-list" class="ump-tag-list"></div>
+            <div class="ump-add-row">
+              <input id="ump-unavail-input" type="date" />
+              <button id="ump-add-unavail-btn" class="btn-primary">Add</button>
+            </div>
+          </div>
+        </div>
+
         <div id="ump-detail-content"></div>
       </div>
     </section>
