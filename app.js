@@ -437,6 +437,15 @@ function showUmpDetail(ump) {
   document.getElementById('ump-detail-view').style.display = '';
   document.getElementById('ump-detail-name').textContent = ump.name;
 
+  // ── Teams datalist from schedule ──
+  const teamsDl = document.getElementById('schedule-teams-list');
+  teamsDl.innerHTML = '';
+  getScheduleTeams().forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    teamsDl.appendChild(opt);
+  });
+
   // ── Teams ──
   const teamsList = document.getElementById('ump-teams-list');
   teamsList.innerHTML = '';
@@ -803,6 +812,20 @@ document.querySelector('#game-edit-modal .modal-overlay').addEventListener('clic
 
 // ── Schedule rendering ─────────────────────────────────────────────────────
 
+function getScheduleTeams() {
+  const teams = new Set();
+  Object.values(state.assignments).forEach(day => {
+    Object.values(day).forEach(timeSlot => {
+      Object.values(timeSlot).forEach(raw => {
+        const slot = normalizeFieldSlot(raw);
+        if (slot.home) teams.add(slot.home.trim());
+        if (slot.away) teams.add(slot.away.trim());
+      });
+    });
+  });
+  return [...teams].sort((a, b) => a.localeCompare(b));
+}
+
 function buildUmpOptions(selectedId, dateStr, time) {
   let opts = '<option value="">— Unassigned —</option>';
   state.umps.forEach(u => {
@@ -852,16 +875,41 @@ function buildGameCell(dateStr, time, fieldName) {
     td.appendChild(addBtn);
   }
 
+  const umpRow = document.createElement('div');
+  umpRow.className = 'ump-selection-row';
+
+  const editUmpBtn = document.createElement('button');
+  editUmpBtn.className = 'game-action-btn ump-edit-btn';
+  editUmpBtn.title = 'Edit umpire assignment';
+  editUmpBtn.textContent = '✎';
+
   const sel = document.createElement('select');
   sel.dataset.time  = time;
   sel.dataset.field = fieldName;
   sel.innerHTML = buildUmpOptions(slot.ump, dateStr, time);
   sel.classList.toggle('assigned', !!slot.ump);
+  sel.disabled = true;
+
+  editUmpBtn.addEventListener('click', () => {
+    sel.disabled = false;
+    editUmpBtn.classList.add('active');
+    sel.focus();
+  });
+
   sel.addEventListener('change', () => {
     setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });
     sel.classList.toggle('assigned', !!sel.value);
+    sel.disabled = true;
+    editUmpBtn.classList.remove('active');
   });
-  td.appendChild(sel);
+
+  sel.addEventListener('blur', () => {
+    sel.disabled = true;
+    editUmpBtn.classList.remove('active');
+  });
+
+  umpRow.append(editUmpBtn, sel);
+  td.appendChild(umpRow);
 
   return td;
 }

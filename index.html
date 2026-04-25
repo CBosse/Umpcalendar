@@ -64,7 +64,8 @@
             <span class="ump-settings-label">Teams</span>
             <div id="ump-teams-list" class="ump-tag-list"></div>
             <div class="ump-add-row">
-              <input id="ump-team-input" type="text" placeholder="Team name" maxlength="40" />
+              <input id="ump-team-input" type="text" placeholder="Team name" maxlength="40" list="schedule-teams-list" autocomplete="off" />
+              <datalist id="schedule-teams-list"></datalist>
               <button id="ump-add-team-btn" class="btn-primary">Add</button>
             </div>
           </div>
