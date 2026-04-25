@@ -186,6 +186,32 @@ main {
   font-weight: 600;
 }
 
+/* Locked umpire select + edit button row */
+.ump-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.ump-row select { flex: 1; min-width: 0; }
+
+.schedule-grid select:disabled {
+  appearance: none;
+  -webkit-appearance: none;
+  border-color: transparent;
+  background: transparent;
+  color: #718096;
+  cursor: default;
+  padding-left: 0;
+  box-shadow: none;
+}
+
+.schedule-grid select:disabled.assigned {
+  color: #2b6cb0;
+  font-weight: 600;
+}
+
 /* Schedule actions */
 .schedule-actions {
   display: flex;

@@ -350,6 +350,20 @@ function isUmpConflicted(ump, dateStr, time) {
   return false;
 }
 
+function getScheduleTeams() {
+  const teams = new Set();
+  Object.values(state.assignments).forEach(day =>
+    Object.values(day).forEach(timeSlot =>
+      Object.values(timeSlot).forEach(raw => {
+        const slot = normalizeFieldSlot(raw);
+        if (slot.home) teams.add(slot.home.trim());
+        if (slot.away) teams.add(slot.away.trim());
+      })
+    )
+  );
+  return [...teams].sort();
+}
+
 // ── Umpires tab ────────────────────────────────────────────────────────────
 
 document.getElementById('add-ump-btn').addEventListener('click', addUmp);
@@ -436,6 +450,15 @@ function showUmpDetail(ump) {
   document.getElementById('ump-list-view').style.display = 'none';
   document.getElementById('ump-detail-view').style.display = '';
   document.getElementById('ump-detail-name').textContent = ump.name;
+
+  // Populate team suggestions from schedule
+  const datalist = document.getElementById('ump-team-datalist');
+  datalist.innerHTML = '';
+  getScheduleTeams().forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    datalist.appendChild(opt);
+  });
 
   // ── Teams ──
   const teamsList = document.getElementById('ump-teams-list');
@@ -852,16 +875,43 @@ function buildGameCell(dateStr, time, fieldName) {
     td.appendChild(addBtn);
   }
 
+  const umpRow = document.createElement('div');
+  umpRow.className = 'ump-row';
+
   const sel = document.createElement('select');
   sel.dataset.time  = time;
   sel.dataset.field = fieldName;
   sel.innerHTML = buildUmpOptions(slot.ump, dateStr, time);
   sel.classList.toggle('assigned', !!slot.ump);
+  sel.disabled = true;
+
+  const editUmpBtn = document.createElement('button');
+  editUmpBtn.className = 'game-action-btn';
+  editUmpBtn.title = 'Change umpire';
+  editUmpBtn.textContent = '✎';
+
+  editUmpBtn.addEventListener('click', () => {
+    sel.disabled = false;
+    editUmpBtn.style.display = 'none';
+    sel.focus();
+  });
+
   sel.addEventListener('change', () => {
     setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });
     sel.classList.toggle('assigned', !!sel.value);
+    sel.disabled = true;
+    editUmpBtn.style.display = '';
   });
-  td.appendChild(sel);
+
+  sel.addEventListener('blur', () => {
+    if (!sel.disabled) {
+      sel.disabled = true;
+      editUmpBtn.style.display = '';
+    }
+  });
+
+  umpRow.append(sel, editUmpBtn);
+  td.appendChild(umpRow);
 
   return td;
 }
