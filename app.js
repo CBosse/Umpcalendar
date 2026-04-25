@@ -861,9 +861,10 @@ function buildGameCell(dateStr, time, fieldName) {
     clearBtn.className = 'game-action-btn game-clear-btn';
     clearBtn.title = 'Remove game';
     clearBtn.textContent = '✕';
-    clearBtn.addEventListener('click', () =>
-      setFieldSlot(dateStr, time, fieldName, { home: '', away: '' })
-    );
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Remove this game?')) return;
+      setFieldSlot(dateStr, time, fieldName, { home: '', away: '' });
+    });
 
     row.append(matchup, editBtn, clearBtn);
     td.appendChild(row);
