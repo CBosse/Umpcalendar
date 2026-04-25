@@ -44,13 +44,22 @@
 
     <!-- Umpires Tab -->
     <section id="tab-umps" class="tab-content">
-      <div class="add-form">
-        <input id="ump-name-input" type="text" placeholder="Umpire name" maxlength="40" />
-        <input id="ump-phone-input" type="text" placeholder="Phone (optional)" maxlength="20" />
-        <button id="add-ump-btn" class="btn-primary">Add Umpire</button>
+      <!-- List view -->
+      <div id="ump-list-view">
+        <div class="add-form">
+          <input id="ump-name-input" type="text" placeholder="Umpire name" maxlength="40" />
+          <input id="ump-phone-input" type="text" placeholder="Phone (optional)" maxlength="20" />
+          <button id="add-ump-btn" class="btn-primary">Add Umpire</button>
+        </div>
+        <ul id="ump-list" class="item-list"></ul>
+        <p id="no-umps-msg" class="muted" style="display:none;">No umpires added yet.</p>
       </div>
-      <ul id="ump-list" class="item-list"></ul>
-      <p id="no-umps-msg" class="muted" style="display:none;">No umpires added yet.</p>
+      <!-- Schedule detail view -->
+      <div id="ump-detail-view" style="display:none;">
+        <button id="ump-back-btn" class="btn-secondary">&larr; Back</button>
+        <h3 id="ump-detail-name" class="ump-detail-heading"></h3>
+        <div id="ump-detail-content"></div>
+      </div>
     </section>
 
     <!-- Settings Tab -->
@@ -76,6 +85,26 @@
       </div>
     </section>
   </main>
+
+  <!-- Game edit modal -->
+  <div id="game-edit-modal" class="modal" style="display:none;" role="dialog" aria-modal="true">
+    <div class="modal-overlay"></div>
+    <div class="modal-box">
+      <h3 class="modal-title">Edit Game</h3>
+      <div class="modal-field">
+        <label for="game-home-input">Home Team</label>
+        <input id="game-home-input" type="text" maxlength="40" autocomplete="off" />
+      </div>
+      <div class="modal-field">
+        <label for="game-away-input">Away Team</label>
+        <input id="game-away-input" type="text" maxlength="40" autocomplete="off" />
+      </div>
+      <div class="modal-actions">
+        <button id="game-edit-save" class="btn-primary">Save</button>
+        <button id="game-edit-cancel" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <div id="db-banner" class="db-banner" style="display:none;"></div>
 

@@ -346,6 +346,150 @@ main {
 
 .btn-danger:hover { background: #fff5f5; }
 
+/* Umpire name as clickable link */
+.ump-name-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  font-weight: 600;
+  color: #1e3a5f;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ump-name-btn:hover { color: #2c5282; }
+
+/* Umpire schedule detail view */
+.ump-detail-heading {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e3a5f;
+  margin: 1rem 0 0.75rem;
+}
+
+.ump-schedule-day { margin-bottom: 1.25rem; }
+
+.ump-schedule-date {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #4a5568;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 0.4rem;
+}
+
+.ump-schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.ump-schedule-row:nth-child(even) { background: #f7fafc; }
+
+.ump-sched-time  { font-weight: 600; color: #1e3a5f; min-width: 75px; white-space: nowrap; }
+.ump-sched-field { color: #4a5568; font-size: 0.85rem; min-width: 80px; }
+.ump-sched-game  { flex: 1; }
+
+/* Game cell action buttons */
+.matchup-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.2rem;
+  margin-bottom: 0.3rem;
+}
+.matchup-row .matchup { flex: 1; margin-bottom: 0; }
+
+.game-action-btn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  color: #a0aec0;
+  line-height: 1.4;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.game-action-btn:hover { background: #ebf4ff; color: #1e3a5f; border-color: #bee3f8; }
+.game-clear-btn:hover  { background: #fff5f5; color: #c53030; border-color: #feb2b2; }
+
+.game-add-btn {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 1px dashed #cbd5e0;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.8rem;
+  color: #a0aec0;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.game-add-btn:hover { background: #f7fafc; border-color: #a0aec0; color: #4a5568; }
+
+/* Game edit modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+}
+.modal-box {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(340px, 90vw);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.modal-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1e3a5f;
+  margin-bottom: 1rem;
+}
+.modal-field { margin-bottom: 0.75rem; }
+.modal-field label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #4a5568;
+  margin-bottom: 0.3rem;
+}
+.modal-field input {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+.modal-field input:focus {
+  outline: none;
+  border-color: #1e3a5f;
+  box-shadow: 0 0 0 2px rgba(30,58,95,0.15);
+}
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
 /* Misc */
 .muted { color: #718096; font-size: 0.9rem; margin-top: 0.75rem; }
 
