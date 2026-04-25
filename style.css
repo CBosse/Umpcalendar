@@ -209,13 +209,14 @@ main {
 
 .schedule-grid select:disabled {
   cursor: default;
-  opacity: 0.8;
+  opacity: 1;
   background: #f7fafc;
+  color: inherit;
 }
 
 .schedule-grid select.assigned:disabled {
   background: #ebf8ff;
-  opacity: 0.9;
+  opacity: 1;
 }
 
 /* Schedule actions */
