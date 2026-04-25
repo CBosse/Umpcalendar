@@ -374,6 +374,9 @@ function countAssignments(umpId) {
 }
 
 function renderUmps() {
+  document.getElementById('ump-list-view').style.display = '';
+  document.getElementById('ump-detail-view').style.display = 'none';
+
   const list = document.getElementById('ump-list');
   const msg  = document.getElementById('no-umps-msg');
   list.innerHTML = '';
@@ -384,15 +387,79 @@ function renderUmps() {
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="info">
-        <span class="name">${escHtml(u.name)}</span>
+        <button class="ump-name-btn">${escHtml(u.name)}</button>
         ${u.phone ? `<span class="sub">${escHtml(u.phone)}</span>` : ''}
       </span>
       <span class="game-count">${n} game${n !== 1 ? 's' : ''}</span>
       <button class="remove-btn">Remove</button>`;
+    li.querySelector('.ump-name-btn').addEventListener('click', () => showUmpSchedule(u));
     li.querySelector('.remove-btn').addEventListener('click', () => removeUmp(u.id));
     list.appendChild(li);
   });
 }
+
+function showUmpSchedule(ump) {
+  document.getElementById('ump-list-view').style.display = 'none';
+  document.getElementById('ump-detail-view').style.display = '';
+  document.getElementById('ump-detail-name').textContent = `${ump.name}'s Schedule`;
+
+  const content = document.getElementById('ump-detail-content');
+  content.innerHTML = '';
+
+  const assignments = [];
+  Object.entries(state.assignments).forEach(([dk, day]) => {
+    Object.entries(day).forEach(([time, timeSlot]) => {
+      Object.entries(timeSlot).forEach(([fieldName, raw]) => {
+        const slot = normalizeFieldSlot(raw);
+        if (slot.ump === ump.id) assignments.push({ dk, time, fieldName, slot });
+      });
+    });
+  });
+
+  if (assignments.length === 0) {
+    content.innerHTML = '<p class="muted" style="margin-top:0.75rem;">No games assigned yet.</p>';
+    return;
+  }
+
+  assignments.sort((a, b) =>
+    a.dk !== b.dk ? a.dk.localeCompare(b.dk) : a.time.localeCompare(b.time)
+  );
+
+  const byDate = {};
+  assignments.forEach(a => { (byDate[a.dk] ??= []).push(a); });
+
+  Object.entries(byDate).forEach(([dk, games]) => {
+    const [y, m, d] = dk.split('-').map(Number);
+    const label = new Date(y, m - 1, d).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    });
+
+    const section = document.createElement('div');
+    section.className = 'ump-schedule-day';
+
+    const heading = document.createElement('div');
+    heading.className = 'ump-schedule-date';
+    heading.textContent = label;
+    section.appendChild(heading);
+
+    games.forEach(({ time, fieldName, slot }) => {
+      const row = document.createElement('div');
+      row.className = 'ump-schedule-row';
+      const gameText = (slot.home || slot.away)
+        ? `${escHtml(slot.home || '?')} vs ${escHtml(slot.away || '?')}`
+        : '<span class="muted">No game info</span>';
+      row.innerHTML = `
+        <span class="ump-sched-time">${formatTime(time)}</span>
+        <span class="ump-sched-field">${escHtml(fieldName)}</span>
+        <span class="ump-sched-game">${gameText}</span>`;
+      section.appendChild(row);
+    });
+
+    content.appendChild(section);
+  });
+}
+
+document.getElementById('ump-back-btn').addEventListener('click', renderUmps);
 
 // ── Schedule tab ───────────────────────────────────────────────────────────
 
@@ -593,6 +660,42 @@ function splitCSVLine(line) {
   return cols;
 }
 
+// ── Game edit modal ────────────────────────────────────────────────────────
+
+let _editingSlot = null;
+
+function openGameEditModal(dateStr, time, fieldName) {
+  const slot = getFieldSlot(dateStr, time, fieldName);
+  _editingSlot = { dateStr, time, fieldName };
+  document.getElementById('game-home-input').value = slot.home;
+  document.getElementById('game-away-input').value = slot.away;
+  document.getElementById('game-edit-modal').style.display = '';
+  document.getElementById('game-home-input').focus();
+}
+
+function closeGameEditModal() {
+  document.getElementById('game-edit-modal').style.display = 'none';
+  _editingSlot = null;
+}
+
+document.getElementById('game-edit-save').addEventListener('click', () => {
+  if (!_editingSlot) return;
+  const home = document.getElementById('game-home-input').value.trim();
+  const away = document.getElementById('game-away-input').value.trim();
+  setFieldSlot(_editingSlot.dateStr, _editingSlot.time, _editingSlot.fieldName, { home, away });
+  closeGameEditModal();
+});
+
+document.getElementById('game-edit-cancel').addEventListener('click', closeGameEditModal);
+document.querySelector('#game-edit-modal .modal-overlay').addEventListener('click', closeGameEditModal);
+
+['game-home-input', 'game-away-input'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter')  document.getElementById('game-edit-save').click();
+    if (e.key === 'Escape') closeGameEditModal();
+  });
+});
+
 // ── Schedule rendering ─────────────────────────────────────────────────────
 
 function buildUmpOptions(selectedId) {
@@ -603,13 +706,58 @@ function buildUmpOptions(selectedId) {
   return opts;
 }
 
-function matchupHTML(slot) {
-  if (!slot.home && !slot.away) return '';
-  return `<div class="matchup">
-    <span class="team">${escHtml(slot.home || '?')}</span>
-    <span class="vs">vs</span>
-    <span class="team">${escHtml(slot.away || '?')}</span>
-  </div>`;
+function buildGameCell(dateStr, time, fieldName) {
+  const td   = document.createElement('td');
+  td.className = 'game-cell';
+  const slot = getFieldSlot(dateStr, time, fieldName);
+
+  if (slot.home || slot.away) {
+    const row = document.createElement('div');
+    row.className = 'matchup-row';
+
+    const matchup = document.createElement('div');
+    matchup.className = 'matchup';
+    matchup.innerHTML = `
+      <span class="team">${escHtml(slot.home || '?')}</span>
+      <span class="vs">vs</span>
+      <span class="team">${escHtml(slot.away || '?')}</span>`;
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'game-action-btn';
+    editBtn.title = 'Edit teams';
+    editBtn.textContent = '✎';
+    editBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'game-action-btn game-clear-btn';
+    clearBtn.title = 'Remove game';
+    clearBtn.textContent = '✕';
+    clearBtn.addEventListener('click', () =>
+      setFieldSlot(dateStr, time, fieldName, { home: '', away: '' })
+    );
+
+    row.append(matchup, editBtn, clearBtn);
+    td.appendChild(row);
+  } else {
+    const addBtn = document.createElement('button');
+    addBtn.className = 'game-add-btn';
+    addBtn.textContent = '+ Add Game';
+    addBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
+    td.appendChild(addBtn);
+  }
+
+  const sel = document.createElement('select');
+  sel.dataset.time  = time;
+  sel.dataset.field = fieldName;
+  sel.innerHTML = buildUmpOptions(slot.ump);
+  sel.classList.toggle('assigned', !!slot.ump);
+  sel.addEventListener('change', () => {
+    setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });
+    sel.classList.toggle('assigned', !!sel.value);
+  });
+  td.appendChild(sel);
+
+  return td;
 }
 
 function renderSchedule() {
@@ -623,7 +771,7 @@ function renderSchedule() {
   tbody.innerHTML = '';
 
   if (state.times.length === 0 || state.fields.length === 0) {
-    table.style.display  = 'none';
+    table.style.display   = 'none';
     noSlots.style.display = '';
     noSlots.innerHTML = state.fields.length === 0
       ? 'No fields configured. Go to <strong>Settings</strong> to add fields.'
@@ -633,39 +781,20 @@ function renderSchedule() {
   table.style.display   = '';
   noSlots.style.display = 'none';
 
-  // Dynamic header row
   const headRow = document.createElement('tr');
   headRow.innerHTML = '<th>Time</th>' +
     state.fields.map(f => `<th>${escHtml(f)}</th>`).join('');
   thead.appendChild(headRow);
 
-  // One row per time slot
   state.times.forEach(time => {
     const tr = document.createElement('tr');
-    let html = `<td class="time-cell">${formatTime(time)}</td>`;
 
-    state.fields.forEach(fieldName => {
-      const slot    = getFieldSlot(currentDate, time, fieldName);
-      const hasGame = !!(slot.home || slot.away || slot.ump);
-      html += `<td class="game-cell${hasGame ? '' : ' no-game'}" data-field="${escHtml(fieldName)}" data-time="${escHtml(time)}">
-        ${matchupHTML(slot)}
-        <select data-time="${escHtml(time)}" data-field="${escHtml(fieldName)}">
-          ${buildUmpOptions(slot.ump)}
-        </select>
-      </td>`;
-    });
+    const timeCell = document.createElement('td');
+    timeCell.className   = 'time-cell';
+    timeCell.textContent = formatTime(time);
+    tr.appendChild(timeCell);
 
-    tr.innerHTML = html;
-
-    tr.querySelectorAll('select').forEach(sel => {
-      sel.classList.toggle('assigned', !!sel.value);
-      sel.addEventListener('change', () => {
-        setFieldSlot(currentDate, sel.dataset.time, sel.dataset.field, { ump: sel.value });
-        sel.classList.toggle('assigned', !!sel.value);
-        // Remove no-game styling once an ump is assigned
-        sel.closest('td').classList.toggle('no-game', false);
-      });
-    });
+    state.fields.forEach(fieldName => tr.appendChild(buildGameCell(currentDate, time, fieldName)));
 
     tbody.appendChild(tr);
   });
