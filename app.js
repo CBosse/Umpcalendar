@@ -35,6 +35,9 @@ const state = {
 };
 
 let currentDate = todayKey();
+const ADMIN_PASSWORD = 'ump-admin';
+let isAdminMode = false;
+let adminDraft = null;
 
 // ── Data model helpers ─────────────────────────────────────────────────────
 
@@ -44,17 +47,31 @@ function normalizeFieldSlot(raw) {
   return { ump: raw.ump ?? '', home: raw.home ?? '', away: raw.away ?? '' };
 }
 
+function cloneAssignments(source) {
+  return JSON.parse(JSON.stringify(source ?? {}));
+}
+
+function getScheduleModel() {
+  if (isAdminMode && adminDraft) return adminDraft;
+  return { fields: state.fields, times: state.times, assignments: state.assignments };
+}
+
+function getScheduleAssignments() {
+  return getScheduleModel().assignments;
+}
+
 function getFieldSlot(dateStr, time, fieldName) {
-  const raw = state.assignments[dateStr]?.[time]?.[fieldName];
+  const raw = getScheduleAssignments()[dateStr]?.[time]?.[fieldName];
   return normalizeFieldSlot(raw);
 }
 
 function setFieldSlot(dateStr, time, fieldName, patch) {
-  if (!state.assignments[dateStr])           state.assignments[dateStr] = {};
-  if (!state.assignments[dateStr][time])     state.assignments[dateStr][time] = {};
-  const cur = normalizeFieldSlot(state.assignments[dateStr][time][fieldName]);
-  state.assignments[dateStr][time][fieldName] = { ...cur, ...patch };
-  saveAssignment(dateStr, state.assignments[dateStr]);
+  const assignments = getScheduleAssignments();
+  if (!assignments[dateStr])       assignments[dateStr] = {};
+  if (!assignments[dateStr][time]) assignments[dateStr][time] = {};
+  const cur = normalizeFieldSlot(assignments[dateStr][time][fieldName]);
+  assignments[dateStr][time][fieldName] = { ...cur, ...patch };
+  if (!isAdminMode) saveAssignment(dateStr, assignments[dateStr]);
 }
 
 // ── Firestore write helpers ────────────────────────────────────────────────
@@ -72,9 +89,13 @@ function firestoreWrite(promise) {
 }
 
 function saveSettings() {
+  return saveSettingsFrom(state.fields, state.times);
+}
+
+function saveSettingsFrom(fields, times) {
   return firestoreWrite(setDoc(doc(db, 'config', 'settings'), {
-    fields: state.fields,
-    times:  state.times,
+    fields,
+    times,
   }));
 }
 
@@ -231,6 +252,7 @@ function renderCurrentTab() {
   if (tab === 'schedule') renderSchedule();
   if (tab === 'umps')     renderUmps();
   if (tab === 'settings') { renderFields(); renderTimes(); }
+  syncAdminUi();
 }
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -243,6 +265,88 @@ document.querySelectorAll('.tab').forEach(btn => {
   });
 });
 
+function beginAdminMode() {
+  isAdminMode = true;
+  adminDraft = {
+    fields: [...state.fields],
+    times: [...state.times],
+    assignments: cloneAssignments(state.assignments),
+  };
+  showBanner('Admin View enabled. Changes are pending until you save.', 'success');
+  renderCurrentTab();
+}
+
+function exitAdminMode() {
+  isAdminMode = false;
+  adminDraft = null;
+  renderCurrentTab();
+}
+
+function syncAdminUi() {
+  const status = document.getElementById('admin-status-msg');
+  const enterBtn = document.getElementById('admin-view-btn');
+  const saveBtn = document.getElementById('admin-save-btn');
+  const lockMsg = document.getElementById('settings-lock-msg');
+  const editLocked = !isAdminMode;
+
+  if (status) status.textContent = isAdminMode
+    ? 'Admin View is active. Save to apply and lock editing.'
+    : 'Settings are locked in View Mode.';
+  if (enterBtn) enterBtn.textContent = isAdminMode ? 'Admin View Active' : 'Admin View';
+  if (enterBtn) enterBtn.disabled = isAdminMode;
+  if (saveBtn) saveBtn.style.display = isAdminMode ? '' : 'none';
+  if (lockMsg) lockMsg.style.display = editLocked ? '' : 'none';
+
+  const settingsInputs = [
+    'new-field-input', 'add-field-btn',
+    'new-time-input', 'add-time-btn',
+  ];
+  settingsInputs.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = editLocked;
+  });
+
+  document.querySelectorAll('#fields-list .remove-btn, #times-list .remove-btn')
+    .forEach(btn => { btn.disabled = editLocked; });
+
+  document.getElementById('clear-day-btn').style.display = isAdminMode ? '' : 'none';
+  document.getElementById('copy-prev-btn').style.display = isAdminMode ? '' : 'none';
+  document.getElementById('import-csv-btn').style.display = isAdminMode ? '' : 'none';
+}
+
+async function saveAndExitAdminMode() {
+  if (!isAdminMode || !adminDraft) return;
+
+  const writes = [saveSettingsFrom(adminDraft.fields, adminDraft.times)];
+  const allDates = new Set([
+    ...Object.keys(state.assignments),
+    ...Object.keys(adminDraft.assignments),
+  ]);
+  allDates.forEach(dateStr => {
+    const before = state.assignments[dateStr] ?? null;
+    const after  = adminDraft.assignments[dateStr] ?? null;
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      writes.push(after
+        ? saveAssignment(dateStr, after)
+        : firestoreWrite(deleteDoc(doc(db, 'assignments', dateStr))));
+    }
+  });
+
+  await Promise.all(writes);
+  showBanner('Admin changes saved. View Mode is active.', 'success');
+  exitAdminMode();
+}
+
+document.getElementById('admin-view-btn').addEventListener('click', () => {
+  const input = prompt('Enter Admin password');
+  if (input === ADMIN_PASSWORD) beginAdminMode();
+  else if (input !== null) alert('Incorrect password.');
+});
+
+document.getElementById('admin-save-btn').addEventListener('click', () => {
+  saveAndExitAdminMode();
+});
+
 // ── Settings: Fields ───────────────────────────────────────────────────────
 
 document.getElementById('add-field-btn').addEventListener('click', addField);
@@ -251,35 +355,41 @@ document.getElementById('new-field-input').addEventListener('keydown', e => {
 });
 
 function addField() {
+  if (!isAdminMode) return;
+  const model = getScheduleModel();
   const input = document.getElementById('new-field-input');
   const name  = input.value.trim();
-  if (!name || state.fields.includes(name)) { input.value = ''; return; }
-  state.fields.push(name);
+  if (!name || model.fields.includes(name)) { input.value = ''; return; }
+  model.fields.push(name);
   input.value = '';
-  saveSettings();
+  renderCurrentTab();
 }
 
 function removeField(name) {
+  if (!isAdminMode) return;
   if (!confirm(`Remove "${name}"? All umpire assignments for this field will be cleared.`)) return;
-  state.fields = state.fields.filter(f => f !== name);
-  const writes = [saveSettings()];
-  Object.entries(state.assignments).forEach(([dateStr, slots]) => {
-    let changed = false;
+  const model = getScheduleModel();
+  model.fields = model.fields.filter(f => f !== name);
+  Object.values(model.assignments).forEach(slots => {
     Object.values(slots).forEach(timeSlot => {
-      if (name in timeSlot) { delete timeSlot[name]; changed = true; }
+      if (name in timeSlot) delete timeSlot[name];
     });
-    if (changed) writes.push(saveAssignment(dateStr, slots));
   });
-  Promise.all(writes);
+  if (adminDraft) {
+    adminDraft.fields = model.fields;
+    adminDraft.assignments = model.assignments;
+  }
+  renderCurrentTab();
 }
 
 function renderFields() {
+  const model = getScheduleModel();
   const list = document.getElementById('fields-list');
   const msg  = document.getElementById('no-fields-msg');
   list.innerHTML = '';
-  if (state.fields.length === 0) { msg.style.display = ''; return; }
+  if (model.fields.length === 0) { msg.style.display = ''; return; }
   msg.style.display = 'none';
-  state.fields.forEach(name => {
+  model.fields.forEach(name => {
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="info"><span class="name">${escHtml(name)}</span></span>
@@ -297,30 +407,33 @@ document.getElementById('new-time-input').addEventListener('keydown', e => {
 });
 
 function addTime() {
+  if (!isAdminMode) return;
+  const model = getScheduleModel();
   const input = document.getElementById('new-time-input');
   const val   = input.value;
-  if (!val || state.times.includes(val)) { input.value = ''; return; }
-  state.times.push(val);
-  state.times.sort();
+  if (!val || model.times.includes(val)) { input.value = ''; return; }
+  model.times.push(val);
+  model.times.sort();
   input.value = '';
-  saveSettings();
+  renderCurrentTab();
 }
 
 function removeTime(hhmm) {
-  state.times = state.times.filter(t => t !== hhmm);
-  const writes = Object.entries(state.assignments)
-    .filter(([, slots]) => hhmm in slots)
-    .map(([dateStr, slots]) => { delete slots[hhmm]; return saveAssignment(dateStr, slots); });
-  Promise.all([saveSettings(), ...writes]);
+  if (!isAdminMode) return;
+  const model = getScheduleModel();
+  model.times = model.times.filter(t => t !== hhmm);
+  Object.values(model.assignments).forEach(slots => { delete slots[hhmm]; });
+  renderCurrentTab();
 }
 
 function renderTimes() {
+  const model = getScheduleModel();
   const list = document.getElementById('times-list');
   const msg  = document.getElementById('no-times-msg');
   list.innerHTML = '';
-  if (state.times.length === 0) { msg.style.display = ''; return; }
+  if (model.times.length === 0) { msg.style.display = ''; return; }
   msg.style.display = 'none';
-  state.times.forEach(t => {
+  model.times.forEach(t => {
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="info"><span class="name">${formatTime(t)}</span></span>
@@ -335,7 +448,7 @@ function renderTimes() {
 function isUmpConflicted(ump, dateStr, time) {
   if (ump.unavailable?.includes(dateStr)) return true;
   if (ump.teams?.length) {
-    const slots = state.assignments[dateStr]?.[time];
+    const slots = getScheduleAssignments()[dateStr]?.[time];
     if (slots) {
       for (const raw of Object.values(slots)) {
         const slot = normalizeFieldSlot(raw);
@@ -596,18 +709,21 @@ document.getElementById('schedule-date').addEventListener('change', e => {
 });
 
 document.getElementById('clear-day-btn').addEventListener('click', () => {
+  if (!isAdminMode) return;
   if (!confirm('Clear all assignments for this day?')) return;
-  delete state.assignments[currentDate];
-  firestoreWrite(deleteDoc(doc(db, 'assignments', currentDate)));
+  delete getScheduleAssignments()[currentDate];
+  renderSchedule();
 });
 
 document.getElementById('copy-prev-btn').addEventListener('click', () => {
+  if (!isAdminMode) return;
   const prevDate = addDays(currentDate, -7);
-  const prevData = state.assignments[prevDate];
+  const prevData = getScheduleAssignments()[prevDate];
   if (!prevData) { alert('No assignments found 7 days ago.'); return; }
   if (!confirm("Copy last week's assignments to this day?")) return;
   const copy = JSON.parse(JSON.stringify(prevData));
-  saveAssignment(currentDate, copy);
+  getScheduleAssignments()[currentDate] = copy;
+  renderSchedule();
 });
 
 document.getElementById('print-btn').addEventListener('click', () => window.print());
@@ -615,6 +731,7 @@ document.getElementById('print-btn').addEventListener('click', () => window.prin
 // ── CSV import ─────────────────────────────────────────────────────────────
 
 document.getElementById('import-csv-btn').addEventListener('click', () => {
+  if (!isAdminMode) return;
   document.getElementById('csv-file-input').click();
 });
 
@@ -645,19 +762,20 @@ function normalizeCSVTime(raw) {
 }
 
 function matchFieldName(raw) {
+  const model = getScheduleModel();
   const trimmed = raw.trim();
   if (!trimmed) return null;
   // Case-insensitive exact match against known fields
-  const exact = state.fields.find(f => f.toLowerCase() === trimmed.toLowerCase());
+  const exact = model.fields.find(f => f.toLowerCase() === trimmed.toLowerCase());
   if (exact) return exact;
   // Normalized alias (removes spaces, dashes, underscores)
   const norm = trimmed.toLowerCase().replace(/[-_ ]/g, '');
-  for (const f of state.fields) {
+  for (const f of model.fields) {
     if (f.toLowerCase().replace(/[-_ ]/g, '') === norm) return f;
   }
   // Common generic aliases → first/second field
-  if (norm === 'field1' || norm === 'f1') return state.fields[0] ?? trimmed;
-  if (norm === 'field2' || norm === 'f2') return state.fields[1] ?? trimmed;
+  if (norm === 'field1' || norm === 'f1') return model.fields[0] ?? trimmed;
+  if (norm === 'field2' || norm === 'f2') return model.fields[1] ?? trimmed;
   // Unknown → return as-is and auto-create it
   return trimmed;
 }
@@ -673,6 +791,11 @@ function showImportStatus(msg, isError = false) {
 
 function importCSV(text) {
   try {
+    if (!isAdminMode) {
+      showImportStatus('Enable Admin View to import CSV.', true);
+      return;
+    }
+    const model = getScheduleModel();
     const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
     if (lines.length < 2) throw new Error('File appears empty or has no data rows.');
 
@@ -713,7 +836,7 @@ function importCSV(text) {
     }
 
     const writes = Object.entries(byDay).map(([dateStr, newSlots]) => {
-      const existing = state.assignments[dateStr] ?? {};
+      const existing = model.assignments[dateStr] ?? {};
       Object.entries(newSlots).forEach(([time, fields]) => {
         if (!existing[time]) existing[time] = {};
         Object.entries(fields).forEach(([f, teams]) => {
@@ -721,20 +844,19 @@ function importCSV(text) {
           existing[time][f] = { ump: cur.ump, home: teams.home, away: teams.away };
         });
       });
-      state.assignments[dateStr] = existing;
-      return saveAssignment(dateStr, existing);
+      model.assignments[dateStr] = existing;
+      return Promise.resolve();
     });
 
     // Auto-add missing times and fields
     const csvTimes  = [...new Set(Object.values(byDay).flatMap(d => Object.keys(d)))];
-    const newTimes  = csvTimes.filter(t => !state.times.includes(t));
+    const newTimes  = csvTimes.filter(t => !model.times.includes(t));
     const csvFields = [...new Set(Object.values(byDay).flatMap(d => Object.values(d).flatMap(t => Object.keys(t))))];
-    const newFields = csvFields.filter(f => !state.fields.includes(f));
+    const newFields = csvFields.filter(f => !model.fields.includes(f));
 
     if (newTimes.length || newFields.length) {
-      state.times  = [...state.times,  ...newTimes].sort();
-      state.fields = [...state.fields, ...newFields];
-      writes.push(saveSettings());
+      model.times  = [...model.times,  ...newTimes].sort();
+      model.fields = [...model.fields, ...newFields];
     }
 
     const importedDates = Object.keys(byDay).sort();
@@ -798,6 +920,7 @@ document.getElementById('game-edit-save').addEventListener('click', () => {
   const away = document.getElementById('game-away-input').value.trim();
   setFieldSlot(_editingSlot.dateStr, _editingSlot.time, _editingSlot.fieldName, { home, away });
   closeGameEditModal();
+  renderSchedule();
 });
 
 document.getElementById('game-edit-cancel').addEventListener('click', closeGameEditModal);
@@ -814,7 +937,7 @@ document.querySelector('#game-edit-modal .modal-overlay').addEventListener('clic
 
 function getScheduleTeams() {
   const teams = new Set();
-  Object.values(state.assignments).forEach(day => {
+  Object.values(getScheduleAssignments()).forEach(day => {
     Object.values(day).forEach(timeSlot => {
       Object.values(timeSlot).forEach(raw => {
         const slot = normalizeFieldSlot(raw);
@@ -851,71 +974,84 @@ function buildGameCell(dateStr, time, fieldName) {
       <span class="vs">vs</span>
       <span class="team">${escHtml(slot.away || '?')}</span>`;
 
-    const editBtn = document.createElement('button');
-    editBtn.className = 'game-action-btn';
-    editBtn.title = 'Edit teams';
-    editBtn.textContent = '✎';
-    editBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
+    row.appendChild(matchup);
+    if (isAdminMode) {
+      const editBtn = document.createElement('button');
+      editBtn.className = 'game-action-btn';
+      editBtn.title = 'Edit teams';
+      editBtn.textContent = '✎';
+      editBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
 
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'game-action-btn game-clear-btn';
-    clearBtn.title = 'Remove game';
-    clearBtn.textContent = '✕';
-    clearBtn.addEventListener('click', () => {
-      if (!confirm('Remove this game?')) return;
-      setFieldSlot(dateStr, time, fieldName, { home: '', away: '' });
-    });
-
-    row.append(matchup, editBtn, clearBtn);
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'game-action-btn game-clear-btn';
+      clearBtn.title = 'Remove game';
+      clearBtn.textContent = '✕';
+      clearBtn.addEventListener('click', () => {
+        if (!confirm('Remove this game?')) return;
+        setFieldSlot(dateStr, time, fieldName, { home: '', away: '' });
+      });
+      row.append(editBtn, clearBtn);
+    }
     td.appendChild(row);
   } else {
-    const addBtn = document.createElement('button');
-    addBtn.className = 'game-add-btn';
-    addBtn.textContent = '+ Add Game';
-    addBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
-    td.appendChild(addBtn);
+    if (isAdminMode) {
+      const addBtn = document.createElement('button');
+      addBtn.className = 'game-add-btn';
+      addBtn.textContent = '+ Add Game';
+      addBtn.addEventListener('click', () => openGameEditModal(dateStr, time, fieldName));
+      td.appendChild(addBtn);
+    }
   }
 
-  const umpRow = document.createElement('div');
-  umpRow.className = 'ump-selection-row';
+  if (isAdminMode) {
+    const umpRow = document.createElement('div');
+    umpRow.className = 'ump-selection-row';
 
-  const editUmpBtn = document.createElement('button');
-  editUmpBtn.className = 'game-action-btn ump-edit-btn';
-  editUmpBtn.title = 'Edit umpire assignment';
-  editUmpBtn.textContent = '✎';
+    const editUmpBtn = document.createElement('button');
+    editUmpBtn.className = 'game-action-btn ump-edit-btn';
+    editUmpBtn.title = 'Edit umpire assignment';
+    editUmpBtn.textContent = '✎';
 
-  const sel = document.createElement('select');
-  sel.dataset.time  = time;
-  sel.dataset.field = fieldName;
-  sel.innerHTML = buildUmpOptions(slot.ump, dateStr, time);
-  sel.classList.toggle('assigned', !!slot.ump);
-  sel.disabled = true;
-
-  editUmpBtn.addEventListener('click', () => {
-    sel.disabled = false;
-    editUmpBtn.classList.add('active');
-    sel.focus();
-  });
-
-  sel.addEventListener('change', () => {
-    setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });
-    sel.classList.toggle('assigned', !!sel.value);
+    const sel = document.createElement('select');
+    sel.dataset.time  = time;
+    sel.dataset.field = fieldName;
+    sel.innerHTML = buildUmpOptions(slot.ump, dateStr, time);
+    sel.classList.toggle('assigned', !!slot.ump);
     sel.disabled = true;
-    editUmpBtn.classList.remove('active');
-  });
 
-  sel.addEventListener('blur', () => {
-    sel.disabled = true;
-    editUmpBtn.classList.remove('active');
-  });
+    editUmpBtn.addEventListener('click', () => {
+      sel.disabled = false;
+      editUmpBtn.classList.add('active');
+      sel.focus();
+    });
 
-  umpRow.append(editUmpBtn, sel);
-  td.appendChild(umpRow);
+    sel.addEventListener('change', () => {
+      setFieldSlot(dateStr, sel.dataset.time, sel.dataset.field, { ump: sel.value });
+      sel.classList.toggle('assigned', !!sel.value);
+      sel.disabled = true;
+      editUmpBtn.classList.remove('active');
+    });
+
+    sel.addEventListener('blur', () => {
+      sel.disabled = true;
+      editUmpBtn.classList.remove('active');
+    });
+
+    umpRow.append(editUmpBtn, sel);
+    td.appendChild(umpRow);
+  } else {
+    const assigned = state.umps.find(u => u.id === slot.ump)?.name ?? '';
+    const readOnly = document.createElement('div');
+    readOnly.className = `schedule-ump-readonly${assigned ? ' assigned' : ''}`;
+    readOnly.textContent = assigned ? `Ump: ${assigned}` : 'Ump: Unassigned';
+    td.appendChild(readOnly);
+  }
 
   return td;
 }
 
 function renderSchedule() {
+  const model = getScheduleModel();
   document.getElementById('schedule-date').value = currentDate;
 
   const thead   = document.getElementById('schedule-head');
@@ -925,10 +1061,10 @@ function renderSchedule() {
   thead.innerHTML = '';
   tbody.innerHTML = '';
 
-  if (state.times.length === 0 || state.fields.length === 0) {
+  if (model.times.length === 0 || model.fields.length === 0) {
     table.style.display   = 'none';
     noSlots.style.display = '';
-    noSlots.innerHTML = state.fields.length === 0
+    noSlots.innerHTML = model.fields.length === 0
       ? 'No fields configured. Go to <strong>Settings</strong> to add fields.'
       : 'No game times configured. Go to <strong>Settings</strong> to add time slots.';
     return;
@@ -938,10 +1074,10 @@ function renderSchedule() {
 
   const headRow = document.createElement('tr');
   headRow.innerHTML = '<th>Time</th>' +
-    state.fields.map(f => `<th>${escHtml(f)}</th>`).join('');
+    model.fields.map(f => `<th>${escHtml(f)}</th>`).join('');
   thead.appendChild(headRow);
 
-  state.times.forEach(time => {
+  model.times.forEach(time => {
     const tr = document.createElement('tr');
 
     const timeCell = document.createElement('td');
@@ -949,7 +1085,7 @@ function renderSchedule() {
     timeCell.textContent = formatTime(time);
     tr.appendChild(timeCell);
 
-    state.fields.forEach(fieldName => tr.appendChild(buildGameCell(currentDate, time, fieldName)));
+    model.fields.forEach(fieldName => tr.appendChild(buildGameCell(currentDate, time, fieldName)));
 
     tbody.appendChild(tr);
   });

@@ -85,6 +85,19 @@
 
     <!-- Settings Tab -->
     <section id="tab-settings" class="tab-content">
+      <div class="settings-group admin-gate">
+        <label>Admin Access</label>
+        <p id="admin-status-msg" class="muted">Settings are locked in View Mode.</p>
+        <div class="schedule-actions">
+          <button id="admin-view-btn" class="btn-secondary">Admin View</button>
+          <button id="admin-save-btn" class="btn-primary" style="display:none;">Save &amp; Exit Admin</button>
+        </div>
+      </div>
+
+      <div id="settings-lock-msg" class="muted" style="display:none; margin-bottom:1rem;">
+        Settings are locked in View Mode. Use <strong>Admin View</strong> to make changes.
+      </div>
+
       <div class="settings-group">
         <label>Fields</label>
         <div class="add-form">
