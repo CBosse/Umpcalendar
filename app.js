@@ -241,6 +241,40 @@ function formatTime(hhmm) {
   return `${hour}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
+function hasScheduledGameData(raw) {
+  const slot = normalizeFieldSlot(raw);
+  return Boolean(slot.ump || slot.home || slot.away);
+}
+
+function dayHasScheduledGames(assignments, dateStr) {
+  const day = assignments[dateStr];
+  if (!day) return false;
+  return Object.values(day).some(timeSlot =>
+    Object.values(timeSlot).some(hasScheduledGameData)
+  );
+}
+
+function scheduledDates(assignments) {
+  return Object.keys(assignments)
+    .filter(dk => dayHasScheduledGames(assignments, dk))
+    .sort();
+}
+
+function findNearestScheduledDate(assignments, dateStr, direction = 1) {
+  const dates = scheduledDates(assignments);
+  if (dates.length === 0) return '';
+  if (direction < 0) {
+    for (let i = dates.length - 1; i >= 0; i--) {
+      if (dates[i] < dateStr) return dates[i];
+    }
+    return dates[dates.length - 1];
+  }
+  for (const dk of dates) {
+    if (dk > dateStr) return dk;
+  }
+  return dates[0];
+}
+
 // ── Tab routing ────────────────────────────────────────────────────────────
 
 function activeTab() {
@@ -693,13 +727,23 @@ document.getElementById('ump-add-unavail-btn').addEventListener('click', () => {
 document.getElementById('schedule-date').value = currentDate;
 
 document.getElementById('prev-day').addEventListener('click', () => {
-  currentDate = addDays(currentDate, -1);
+  if (!isAdminMode) {
+    const prevScheduled = findNearestScheduledDate(getScheduleAssignments(), currentDate, -1);
+    if (prevScheduled) currentDate = prevScheduled;
+  } else {
+    currentDate = addDays(currentDate, -1);
+  }
   document.getElementById('schedule-date').value = currentDate;
   renderSchedule();
 });
 
 document.getElementById('next-day').addEventListener('click', () => {
-  currentDate = addDays(currentDate, 1);
+  if (!isAdminMode) {
+    const nextScheduled = findNearestScheduledDate(getScheduleAssignments(), currentDate, 1);
+    if (nextScheduled) currentDate = nextScheduled;
+  } else {
+    currentDate = addDays(currentDate, 1);
+  }
   document.getElementById('schedule-date').value = currentDate;
   renderSchedule();
 });
@@ -1052,6 +1096,10 @@ function buildGameCell(dateStr, time, fieldName) {
 
 function renderSchedule() {
   const model = getScheduleModel();
+  if (!isAdminMode && !dayHasScheduledGames(model.assignments, currentDate)) {
+    const nextDate = findNearestScheduledDate(model.assignments, currentDate, 1);
+    if (nextDate) currentDate = nextDate;
+  }
   document.getElementById('schedule-date').value = currentDate;
 
   const thead   = document.getElementById('schedule-head');
@@ -1071,6 +1119,13 @@ function renderSchedule() {
   }
   table.style.display   = '';
   noSlots.style.display = 'none';
+
+  if (!isAdminMode && !dayHasScheduledGames(model.assignments, currentDate)) {
+    table.style.display   = 'none';
+    noSlots.style.display = '';
+    noSlots.textContent   = 'No scheduled games.';
+    return;
+  }
 
   const headRow = document.createElement('tr');
   headRow.innerHTML = '<th>Time</th>' +
